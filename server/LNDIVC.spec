@@ -1,0 +1,137 @@
+# -*- mode: python ; coding: utf-8 -*-
+#
+# LNDIVC PyInstaller 스펙
+# 빌드: build.bat 또는 pyinstaller LNDIVC.spec --noconfirm
+#
+# 출력: dist/LNDIVC/ 폴더 (LNDIVC.exe + 필요 DLL 포함)
+# 배포: dist/LNDIVC/ 폴더 전체를 복사하여 배포
+#
+
+block_cipher = None
+
+a = Analysis(
+    ['server.py'],
+    pathex=[],
+    binaries=[],
+    datas=[
+        # static 웹 리소스
+        ('static', 'static'),
+        # 인증서 생성 모듈 (setup_wizard.py가 import)
+        ('generate_cert.py', '.'),
+        # 설정 마법사 (LNDIVC.exe --setup 으로 호출 가능)
+        ('setup_wizard.py', '.'),
+    ],
+    hiddenimports=[
+        # aiohttp 내부 모듈
+        'aiohttp',
+        'aiohttp.web',
+        'aiohttp.web_runner',
+        'aiohttp.web_ws',
+        'aiohttp.resolver',
+        'aiohttp.connector',
+        # aiortc 코덱 모듈
+        'aiortc',
+        'aiortc.codecs',
+        'aiortc.codecs.h264',
+        'aiortc.codecs.opus',
+        'aiortc.codecs.vpx',
+        'aiortc.contrib',
+        'aiortc.contrib.media',
+        # PyAV
+        'av',
+        'av.codec',
+        'av.codec.context',
+        'av.container',
+        'av.filter',
+        'av.frame',
+        'av.packet',
+        # OpenCV
+        'cv2',
+        # NumPy
+        'numpy',
+        'numpy.core',
+        # sounddevice / PortAudio
+        'sounddevice',
+        'cffi',
+        '_cffi_backend',
+        # pyvirtualcam
+        'pyvirtualcam',
+        # cryptography (인증서 생성용)
+        'cryptography',
+        'cryptography.hazmat.backends',
+        'cryptography.hazmat.backends.openssl',
+        'cryptography.hazmat.primitives',
+        'cryptography.hazmat.primitives.asymmetric',
+        'cryptography.hazmat.primitives.asymmetric.rsa',
+        'cryptography.hazmat.primitives.hashes',
+        'cryptography.hazmat.primitives.serialization',
+        'cryptography.x509',
+        'cryptography.x509.oid',
+        # JSON / 표준 라이브러리
+        'json',
+        'ssl',
+        'socket',
+        'asyncio',
+        'subprocess',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        # 불필요한 대형 패키지 제외
+        'tkinter',
+        'matplotlib',
+        'scipy',
+        'pandas',
+        'PIL',
+        'Pillow',
+        'PyQt5',
+        'PyQt6',
+        'PySide2',
+        'PySide6',
+        'wx',
+    ],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+# PyAV / aiortc 패키지 데이터 수집
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+
+a.datas  += collect_data_files('av')
+a.datas  += collect_data_files('aiortc')
+a.binaries += collect_dynamic_libs('av')
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='LNDIVC',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=True,          # 콘솔 창 표시 (서버 로그 확인용)
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='LNDIVC',
+)
