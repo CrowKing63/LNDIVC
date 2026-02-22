@@ -75,6 +75,20 @@ async def audio_writer():
                 log.warning(f"오디오 출력 오류: {e}")
 
 
+# ── 유틸리티 ──────────────────────────────────────────────────────────
+def _letterbox(img: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    """종횡비 유지하며 target 해상도로 리사이즈 (레터박스, 검정 패딩)"""
+    h, w = img.shape[:2]
+    scale = min(target_w / w, target_h / h)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(img, (new_w, new_h))
+    canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+    y_off = (target_h - new_h) // 2
+    x_off = (target_w - new_w) // 2
+    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
+    return canvas
+
+
 # ── WebRTC 트랙 수신 ──────────────────────────────────────────────────
 async def receive_video(track):
     log.info("비디오 트랙 수신 시작")
@@ -83,10 +97,10 @@ async def receive_video(track):
             frame: av.VideoFrame = await track.recv()
             img = frame.to_ndarray(format="rgb24")
 
-            # 해상도가 다르면 리사이즈
+            # 해상도가 다르면 종횡비 유지하며 리사이즈 (레터박스)
             h, w = img.shape[:2]
             if w != VIDEO_WIDTH or h != VIDEO_HEIGHT:
-                img = cv2.resize(img, (VIDEO_WIDTH, VIDEO_HEIGHT))
+                img = _letterbox(img, VIDEO_WIDTH, VIDEO_HEIGHT)
 
             if g_cam is not None:
                 g_cam.send(img)
@@ -285,7 +299,15 @@ async def run_server():
         print(f"  {url_note}")
         print(f"  가상 카메라: {cam_label}")
         print(f"  오디오 출력: {audio_label}")
-        print(f"{'='*55}\n")
+        print(f"{'='*55}")
+        if g_cam is not None:
+            print()
+            print("  [Zoom/Teams 등 다른 앱에서 사용하려면]")
+            print("  1. OBS에서 '비디오 캡처 장치' 소스 추가")
+            print("     → 장치: OBS Virtual Camera 선택")
+            print("  2. OBS 도구 → 가상 카메라 시작")
+            print("  3. 다른 앱에서 'OBS Virtual Camera' 선택")
+        print()
 
         # 오디오 큐 소비 태스크 시작
         audio_task = asyncio.ensure_future(audio_writer())
