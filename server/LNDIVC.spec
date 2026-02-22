@@ -22,6 +22,8 @@ a = Analysis(
         ('setup_wizard.py', '.'),
         # i18n 모듈
         ('i18n.py', '.'),
+        # 드라이버 설치 모듈
+        ('install_drivers.py', '.'),
         # customtkinter 테마 파일
         ('server.py', '.'),
     ],
