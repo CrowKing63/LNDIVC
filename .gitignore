@@ -1,0 +1,8 @@
+# 인증서 (PC마다 generate_cert.py로 생성 — 저장소에 포함 금지)
+server/cert.pem
+server/key.pem
+
+# Python 가상환경
+server/.venv/
+__pycache__/
+*.pyc
