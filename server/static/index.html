@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LNDIVC – Vision Pro 스트리머</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0a0a;
+      color: #f0f0f0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100svh;
+      padding: 24px;
+      gap: 20px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      color: #fff;
+    }
+
+    #preview-wrap {
+      width: 100%;
+      max-width: 560px;
+      aspect-ratio: 16/9;
+      background: #1a1a1a;
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #preview {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: none;
+    }
+
+    #placeholder {
+      font-size: 14px;
+      color: #555;
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    #status-bar {
+      width: 100%;
+      max-width: 560px;
+      background: #1a1a1a;
+      border-radius: 12px;
+      padding: 14px 18px;
+      font-size: 14px;
+      color: #aaa;
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #dot.connecting { background: #ffa500; animation: pulse 1s infinite; }
+    #dot.connected  { background: #34c759; }
+    #dot.error      { background: #ff3b30; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    #start-btn {
+      width: 100%;
+      max-width: 560px;
+      padding: 18px;
+      border-radius: 14px;
+      border: none;
+      background: #0a84ff;
+      color: #fff;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    #start-btn:active  { transform: scale(0.98); }
+    #start-btn:disabled {
+      background: #1c3a5e;
+      color: #4a7aaa;
+      cursor: default;
+    }
+
+    #stop-btn {
+      width: 100%;
+      max-width: 560px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid #333;
+      background: transparent;
+      color: #ff3b30;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      display: none;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #444;
+      text-align: center;
+      max-width: 480px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>LNDIVC</h1>
+
+  <div id="preview-wrap">
+    <video id="preview" autoplay muted playsinline></video>
+    <div id="placeholder">
+      스트리밍 시작 버튼을 누르면<br>카메라·마이크 권한을 요청합니다
+    </div>
+  </div>
+
+  <div id="status-bar">
+    <div id="dot"></div>
+    <span id="status-text">대기 중</span>
+  </div>
+
+  <button id="start-btn">스트리밍 시작</button>
+  <button id="stop-btn">스트리밍 중지</button>
+
+  <p class="hint">
+    Windows PC에서 Zoom · PlayAbility 등의 카메라로<br>
+    <strong>OBS Virtual Camera</strong>를 선택하세요
+  </p>
+
+<script>
+'use strict';
+
+const startBtn  = document.getElementById('start-btn');
+const stopBtn   = document.getElementById('stop-btn');
+const statusTxt = document.getElementById('status-text');
+const dot       = document.getElementById('dot');
+const preview   = document.getElementById('preview');
+const placeholder = document.getElementById('placeholder');
+
+let pc = null;
+let ws = null;
+let localStream = null;
+
+function setStatus(msg, state = '') {
+  statusTxt.textContent = msg;
+  dot.className = state ? `${state}` : '';
+}
+
+async function startStreaming() {
+  startBtn.disabled = true;
+  setStatus('카메라·마이크 권한 요청 중…', 'connecting');
+
+  try {
+    // 1. 미디어 스트림 획득 (visionOS: 페르소나 카메라 + 마이크)
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width:     { ideal: 1280 },
+        height:    { ideal: 720  },
+        frameRate: { ideal: 30   },
+        facingMode: 'user'
+      },
+      audio: {
+        sampleRate:       48000,
+        channelCount:     1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl:  false
+      }
+    });
+
+    // 미리보기
+    preview.srcObject = localStream;
+    preview.style.display = 'block';
+    placeholder.style.display = 'none';
+
+    setStatus('서버에 연결 중…', 'connecting');
+
+    // 2. WebSocket 시그널링 연결 (같은 호스트)
+    ws = new WebSocket(`wss://${location.host}/ws`);
+
+    // 3. RTCPeerConnection (LAN이므로 STUN 불필요)
+    pc = new RTCPeerConnection({ iceServers: [] });
+
+    // 트랙 추가
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    // ICE 후보 전송
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ice', candidate: candidate.toJSON() }));
+      }
+    };
+
+    // 연결 상태 모니터링
+    pc.onconnectionstatechange = () => {
+      const s = pc.connectionState;
+      if (s === 'connected') {
+        setStatus('✅ 스트리밍 중 — Windows에서 "OBS Virtual Camera" 선택', 'connected');
+        stopBtn.style.display = 'block';
+      } else if (s === 'disconnected' || s === 'failed') {
+        setStatus('연결 끊김: ' + s, 'error');
+        cleanup();
+      } else {
+        setStatus('상태: ' + s, 'connecting');
+      }
+    };
+
+    // WebSocket 이벤트
+    ws.onopen = async () => {
+      // Offer 생성 및 전송
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: offer.type, sdp: offer.sdp }));
+      setStatus('협상 중…', 'connecting');
+    };
+
+    ws.onmessage = async ({ data }) => {
+      const msg = JSON.parse(data);
+      if (msg.type === 'answer') {
+        await pc.setRemoteDescription(new RTCSessionDescription(msg));
+      }
+    };
+
+    ws.onerror = () => setStatus('WebSocket 오류', 'error');
+    ws.onclose = () => {
+      if (pc && pc.connectionState !== 'connected') {
+        setStatus('서버 연결 종료', 'error');
+        cleanup();
+      }
+    };
+
+  } catch (err) {
+    setStatus('오류: ' + err.message, 'error');
+    dot.className = 'error';
+    startBtn.disabled = false;
+  }
+}
+
+function cleanup() {
+  if (pc)  { pc.close();  pc = null; }
+  if (ws)  { ws.close();  ws = null; }
+  if (localStream) {
+    localStream.getTracks().forEach(t => t.stop());
+    localStream = null;
+  }
+  preview.srcObject = null;
+  preview.style.display = 'none';
+  placeholder.style.display = '';
+  startBtn.disabled = false;
+  stopBtn.style.display = 'none';
+  setStatus('중지됨');
+}
+
+startBtn.addEventListener('click', startStreaming);
+stopBtn.addEventListener('click', () => {
+  setStatus('중지 중…');
+  cleanup();
+});
+</script>
+</body>
+</html>
