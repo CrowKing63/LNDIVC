@@ -13,7 +13,17 @@ import json
 import logging
 import socket
 import ssl
+import sys
 from pathlib import Path
+
+# ── 경로 설정 (PyInstaller frozen / 일반 Python 공통) ──────────────────
+if getattr(sys, 'frozen', False):
+    # PyInstaller .exe: 쓰기 가능 파일(cert, config)은 .exe 옆, 번들 리소스는 _MEIPASS
+    DATA_DIR   = Path(sys.executable).parent
+    BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    DATA_DIR   = Path(__file__).parent
+    BUNDLE_DIR = Path(__file__).parent
 
 import av
 import cv2
@@ -109,7 +119,7 @@ async def receive_audio(track):
 
 # ── HTTP 라우터 ───────────────────────────────────────────────────────
 async def handle_index(request):
-    return web.FileResponse(Path(__file__).parent / "static" / "index.html")
+    return web.FileResponse(BUNDLE_DIR / "static" / "index.html")
 
 
 async def handle_ws(request):
@@ -173,13 +183,24 @@ async def handle_ws(request):
 
 
 # ── 메인 ─────────────────────────────────────────────────────────────
+def _load_config() -> dict:
+    """config.json 로드 (없으면 self_signed 기본값 반환)"""
+    config_path = DATA_DIR / "config.json"
+    if config_path.exists():
+        try:
+            return json.loads(config_path.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    return {'mode': 'self_signed', 'hostname': '', 'port': PORT}
+
+
 async def run_server():
     # SSL 설정
-    cert = Path(__file__).parent / "cert.pem"
-    key = Path(__file__).parent / "key.pem"
+    cert = DATA_DIR / "cert.pem"
+    key  = DATA_DIR / "key.pem"
     if not cert.exists() or not key.exists():
-        print("\n❌  cert.pem / key.pem 없음.")
-        print("    먼저 setup.bat 을 실행하거나: python generate_cert.py\n")
+        print("\n  cert.pem / key.pem 없음.")
+        print("  먼저 setup.bat 을 실행하세요.\n")
         return
 
     ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -203,7 +224,15 @@ async def run_server():
     app.router.add_get("/", handle_index)
     app.router.add_get("/ws", handle_ws)
 
-    local_ip = socket.gethostbyname(socket.gethostname())
+    # 접속 URL 결정 (Tailscale vs 로컬 IP)
+    cfg = _load_config()
+    if cfg.get('mode') == 'tailscale' and cfg.get('hostname'):
+        access_url = f"https://{cfg['hostname']}:{PORT}"
+        url_note   = "(Tailscale - 인증서 신뢰 불필요)"
+    else:
+        local_ip   = socket.gethostbyname(socket.gethostname())
+        access_url = f"https://{local_ip}:{PORT}"
+        url_note   = "(자체 서명 - Vision Pro에서 cert.pem 신뢰 필요)"
 
     global g_cam, g_audio_out
 
@@ -252,7 +281,8 @@ async def run_server():
         print(f"\n{'='*55}")
         print(f"  LNDIVC 서버 실행 중")
         print(f"  Vision Pro Safari에서 아래 주소로 접속하세요:")
-        print(f"\n    https://{local_ip}:{PORT}\n")
+        print(f"\n    {access_url}\n")
+        print(f"  {url_note}")
         print(f"  가상 카메라: {cam_label}")
         print(f"  오디오 출력: {audio_label}")
         print(f"{'='*55}\n")
@@ -272,6 +302,11 @@ async def run_server():
 
 
 def main():
+    if '--setup' in sys.argv:
+        # 설정 마법사 실행 (LNDIVC.exe --setup)
+        from setup_wizard import main as setup_main
+        setup_main(DATA_DIR)
+        return
     try:
         asyncio.run(run_server())
     except KeyboardInterrupt:
