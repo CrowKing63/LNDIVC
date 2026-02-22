@@ -76,17 +76,15 @@ async def audio_writer():
 
 
 # ── 유틸리티 ──────────────────────────────────────────────────────────
-def _letterbox(img: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
-    """종횡비 유지하며 target 해상도로 리사이즈 (레터박스, 검정 패딩)"""
+def _crop_to_fill(img: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    """종횡비 유지하며 target 해상도를 가득 채우도록 크롭 (얼굴 크게)"""
     h, w = img.shape[:2]
-    scale = min(target_w / w, target_h / h)
+    scale = max(target_w / w, target_h / h)
     new_w, new_h = int(w * scale), int(h * scale)
     resized = cv2.resize(img, (new_w, new_h))
-    canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-    y_off = (target_h - new_h) // 2
-    x_off = (target_w - new_w) // 2
-    canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
-    return canvas
+    y_off = (new_h - target_h) // 2
+    x_off = (new_w - target_w) // 2
+    return resized[y_off:y_off + target_h, x_off:x_off + target_w]
 
 
 # ── WebRTC 트랙 수신 ──────────────────────────────────────────────────
@@ -97,10 +95,10 @@ async def receive_video(track):
             frame: av.VideoFrame = await track.recv()
             img = frame.to_ndarray(format="rgb24")
 
-            # 해상도가 다르면 종횡비 유지하며 리사이즈 (레터박스)
+            # 해상도가 다르면 종횡비 유지하며 크롭 (얼굴이 크게 채워지도록)
             h, w = img.shape[:2]
             if w != VIDEO_WIDTH or h != VIDEO_HEIGHT:
-                img = _letterbox(img, VIDEO_WIDTH, VIDEO_HEIGHT)
+                img = _crop_to_fill(img, VIDEO_WIDTH, VIDEO_HEIGHT)
 
             if g_cam is not None:
                 g_cam.send(img)
