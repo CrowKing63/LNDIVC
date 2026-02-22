@@ -18,10 +18,22 @@ from pathlib import Path
 import av
 import cv2
 import numpy as np
-import pyvirtualcam
-import sounddevice as sd
 from aiohttp import web
 from aiortc import RTCIceCandidate, RTCPeerConnection, RTCSessionDescription
+
+try:
+    import pyvirtualcam
+    HAVE_VIRTUALCAM = True
+except Exception:
+    pyvirtualcam = None
+    HAVE_VIRTUALCAM = False
+
+try:
+    import sounddevice as sd
+    HAVE_AUDIO = True
+except Exception:
+    sd = None
+    HAVE_AUDIO = False
 
 # ── 설정 ──────────────────────────────────────────────────────────────
 VIDEO_WIDTH = 1280
@@ -175,13 +187,16 @@ async def run_server():
 
     # VB-Audio Virtual Cable 찾기 (없으면 기본 장치)
     vbcable_idx = None
-    for i, dev in enumerate(sd.query_devices()):
-        if "CABLE Input" in dev["name"] and dev["max_output_channels"] > 0:
-            vbcable_idx = i
-            log.info(f"VB-Audio CABLE Input 발견: index={i}")
-            break
-    if vbcable_idx is None:
-        log.warning("VB-Audio CABLE Input 없음 → 기본 스피커 출력 (Zoom 마이크 연동 불가)")
+    if HAVE_AUDIO:
+        for i, dev in enumerate(sd.query_devices()):
+            if "CABLE Input" in dev["name"] and dev["max_output_channels"] > 0:
+                vbcable_idx = i
+                log.info(f"VB-Audio CABLE Input 발견: index={i}")
+                break
+        if vbcable_idx is None:
+            log.warning("VB-Audio CABLE Input 없음 → 기본 스피커 출력 (Zoom 마이크 연동 불가)")
+    else:
+        log.warning("sounddevice 없음 → 오디오 출력 비활성화")
 
     # aiohttp 앱
     app = web.Application()
@@ -192,41 +207,68 @@ async def run_server():
 
     global g_cam, g_audio_out
 
-    with pyvirtualcam.Camera(
-        width=VIDEO_WIDTH, height=VIDEO_HEIGHT, fps=VIDEO_FPS, print_fps=False
-    ) as cam:
-        g_cam = cam
-        log.info(f"가상 카메라 활성화: {cam.device}")
+    # 가상 카메라 초기화 (없으면 None으로 진행)
+    cam_ctx = None
+    if HAVE_VIRTUALCAM:
+        try:
+            cam_ctx = pyvirtualcam.Camera(
+                width=VIDEO_WIDTH, height=VIDEO_HEIGHT, fps=VIDEO_FPS, print_fps=False
+            )
+            g_cam = cam_ctx.__enter__()
+            log.info(f"가상 카메라 활성화: {g_cam.device}")
+        except Exception as e:
+            log.warning(f"가상 카메라 초기화 실패 (Windows/OBS 환경 필요): {e}")
+            cam_ctx = None
+    else:
+        log.warning("pyvirtualcam 없음 → 비디오 출력 비활성화")
 
-        with sd.OutputStream(
-            samplerate=AUDIO_SAMPLE_RATE,
-            channels=AUDIO_CHANNELS,
-            dtype="int16",
-            blocksize=2048,
-            device=vbcable_idx,
-        ) as audio_out:
-            g_audio_out = audio_out
+    # 오디오 출력 초기화
+    audio_ctx = None
+    if HAVE_AUDIO:
+        try:
+            audio_ctx = sd.OutputStream(
+                samplerate=AUDIO_SAMPLE_RATE,
+                channels=AUDIO_CHANNELS,
+                dtype="int16",
+                blocksize=2048,
+                device=vbcable_idx,
+            )
+            g_audio_out = audio_ctx.__enter__()
+        except Exception as e:
+            log.warning(f"오디오 출력 초기화 실패: {e}")
+            audio_ctx = None
 
-            runner = web.AppRunner(app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT, ssl_context=ssl_ctx)
-            await site.start()
+    try:
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT, ssl_context=ssl_ctx)
+        await site.start()
 
-            print(f"\n{'='*55}")
-            print(f"  LNDIVC 서버 실행 중")
-            print(f"  Vision Pro Safari에서 아래 주소로 접속하세요:")
-            print(f"\n    https://{local_ip}:{PORT}\n")
-            print(f"  가상 카메라: {cam.device}")
-            print(f"  오디오 출력: {'VB-Audio CABLE Input' if vbcable_idx is not None else '기본 스피커'}")
-            print(f"{'='*55}\n")
+        cam_label = g_cam.device if g_cam else "비활성 (OBS 필요)"
+        audio_label = "VB-Audio CABLE Input" if vbcable_idx is not None else (
+            "기본 스피커" if HAVE_AUDIO and g_audio_out else "비활성"
+        )
 
-            # 오디오 큐 소비 태스크 시작
-            audio_task = asyncio.ensure_future(audio_writer())
-            try:
-                await asyncio.Event().wait()  # 무한 대기
-            finally:
-                audio_task.cancel()
-                await runner.cleanup()
+        print(f"\n{'='*55}")
+        print(f"  LNDIVC 서버 실행 중")
+        print(f"  Vision Pro Safari에서 아래 주소로 접속하세요:")
+        print(f"\n    https://{local_ip}:{PORT}\n")
+        print(f"  가상 카메라: {cam_label}")
+        print(f"  오디오 출력: {audio_label}")
+        print(f"{'='*55}\n")
+
+        # 오디오 큐 소비 태스크 시작
+        audio_task = asyncio.ensure_future(audio_writer())
+        try:
+            await asyncio.Event().wait()  # 무한 대기
+        finally:
+            audio_task.cancel()
+            await runner.cleanup()
+    finally:
+        if cam_ctx is not None:
+            cam_ctx.__exit__(None, None, None)
+        if audio_ctx is not None:
+            audio_ctx.__exit__(None, None, None)
 
 
 def main():
