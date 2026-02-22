@@ -172,6 +172,11 @@ def _build_menu() -> "pystray.Menu":
             lambda icon, item: _open_window(_settings_window_fn),
         ),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem(
+            t('uninstall'),
+            lambda icon, item: _open_window(_uninstall_window_fn),
+        ),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem(t('quit'), _on_quit),
     )
 
@@ -417,6 +422,311 @@ def _setup_window_fn() -> None:
     else:
         ctk.Label(root, text=t('setup_title')).pack(pady=10)  # type: ignore
         ctk.Button(root, text=t('close'), command=root.destroy).pack(pady=10)  # type: ignore
+
+    root.mainloop()
+
+
+# ── 제거 헬퍼 ─────────────────────────────────────────────────────────
+_UNITY_CLSID = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
+
+
+def _find_unitycapture() -> "str | None":
+    """레지스트리에서 UnityCapture .ax 파일 경로 반환"""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                             rf'CLSID\{_UNITY_CLSID}\InprocServer32')
+        val, _ = winreg.QueryValueEx(key, '')
+        winreg.CloseKey(key)
+        return val if Path(val).exists() else None
+    except Exception:
+        return None
+
+
+def _find_vbcable_uninstaller() -> "str | None":
+    """레지스트리 또는 알려진 경로에서 VB-Cable 제거 프로그램 탐색"""
+    try:
+        import winreg
+        subkeys = (
+            r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable',
+            r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable',
+        )
+        for root_hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for sub in subkeys:
+                try:
+                    key = winreg.OpenKey(root_hive, sub)
+                    val, _ = winreg.QueryValueEx(key, 'UninstallString')
+                    winreg.CloseKey(key)
+                    if val:
+                        return val
+                except Exception:
+                    pass
+    except ImportError:
+        pass
+    for p in (
+        r'C:\Program Files\VB\CABLE\VBCABLE_Setup_x64.exe',
+        r'C:\Program Files (x86)\VB\CABLE\VBCABLE_Setup_x64.exe',
+    ):
+        if Path(p).exists():
+            return p
+    return None
+
+
+def _get_camera_apps() -> "list[tuple[str, int]]":
+    """가상 카메라를 점유할 수 있는 실행 중 프로세스 목록 반환"""
+    targets = {
+        'zoom.exe', 'teams.exe', 'obs64.exe', 'obs32.exe',
+        'chrome.exe', 'firefox.exe', 'msedge.exe', 'slack.exe',
+        'discord.exe', 'webex.exe', 'skype.exe', 'msteams.exe',
+    }
+    result = []
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ['tasklist', '/fo', 'csv', '/nh'],
+            creationflags=0x08000000,   # CREATE_NO_WINDOW
+        ).decode('utf-8', errors='replace')
+        for line in out.splitlines():
+            parts = line.strip('"').split('","')
+            if len(parts) >= 2 and parts[0].lower() in targets:
+                try:
+                    result.append((parts[0], int(parts[1])))
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return result
+
+
+def _kill_pid(pid: int) -> None:
+    import subprocess
+    subprocess.run(['taskkill', '/PID', str(pid), '/F'],
+                   capture_output=True, creationflags=0x08000000)
+
+
+def _schedule_delete(path: str) -> bool:
+    """MoveFileExW DELAY_UNTIL_REBOOT: 재부팅 후 파일 삭제 예약"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.kernel32.MoveFileExW(path, None, 4))
+    except Exception:
+        return False
+
+
+def _regsvr32_unregister(path: str) -> bool:
+    """관리자 권한으로 regsvr32 /u /s 실행 (UAC 상승 포함)"""
+    import subprocess
+    # 1차: 현재 권한으로 시도
+    ret = subprocess.run(
+        ['regsvr32', '/u', '/s', path],
+        capture_output=True, creationflags=0x08000000,
+    )
+    if ret.returncode == 0:
+        return True
+    # 2차: PowerShell RunAs (UAC 프롬프트)
+    try:
+        ps_cmd = (
+            f'Start-Process regsvr32.exe '
+            f'-ArgumentList "/u /s `\'{path}`\'" '
+            f'-Verb RunAs -Wait -PassThru'
+        )
+        subprocess.run(
+            ['powershell', '-Command', ps_cmd],
+            creationflags=0x08000000,
+        )
+        return True   # UAC 성공 여부는 별도 확인 불가 → True 반환
+    except Exception:
+        return False
+
+
+def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
+                  log_cb: "callable") -> bool:
+    """
+    실제 제거 수행.
+    log_cb(str) : UI 로그 갱신 콜백
+    반환: 재부팅 필요 여부 (True = 재부팅 권고)
+    """
+    import subprocess
+    needs_reboot = False
+
+    # 1. 서버 중지
+    log_cb("● 서버 중지 중...")
+    stop_server()
+
+    # 2. 설정·인증서 파일 삭제
+    log_cb("● 설정 파일 삭제 중...")
+    for fname in ('cert.pem', 'key.pem', 'config.json'):
+        p = DATA_DIR / fname
+        if p.exists():
+            try:
+                p.unlink()
+                log_cb(f"  ✓ {fname}")
+            except Exception as e:
+                log_cb(f"  ✗ {fname}: {e}")
+
+    # 3. UnityCapture 드라이버 제거
+    if remove_unity:
+        unity_path = _find_unitycapture()
+        if unity_path:
+            log_cb("● UnityCapture 드라이버 등록 해제 중...")
+            ok = _regsvr32_unregister(unity_path)
+            if ok:
+                log_cb("  ✓ 등록 해제 완료")
+            else:
+                log_cb("  ✗ 등록 해제 실패 (관리자 권한 필요)")
+
+            # .ax 파일 삭제 시도
+            log_cb(f"  파일 삭제 시도: {unity_path}")
+            try:
+                Path(unity_path).unlink()
+                log_cb("  ✓ 파일 삭제 완료")
+            except PermissionError:
+                # 프로세스가 파일을 물고 있음 → 재부팅 후 삭제 예약
+                if _schedule_delete(unity_path):
+                    log_cb("  ↻ 파일 삭제 예약됨 (재부팅 후 자동 삭제)")
+                    needs_reboot = True
+                else:
+                    log_cb(f"  ✗ 파일 삭제 실패 — 직접 삭제 필요:\n    {unity_path}")
+            except Exception as e:
+                log_cb(f"  ✗ 파일 삭제 실패: {e}")
+        else:
+            log_cb("● UnityCapture: 미설치 (건너뜀)")
+
+    # 4. VB-Cable 제거
+    if remove_vbcable:
+        vbc = _find_vbcable_uninstaller()
+        if vbc:
+            log_cb("● VB-Audio CABLE 제거 실행 중 (UAC 창이 열릴 수 있음)...")
+            try:
+                subprocess.Popen([vbc], creationflags=0x08000000)
+                log_cb("  ✓ 제거 프로그램 실행됨")
+            except Exception as e:
+                log_cb(f"  ✗ 실행 실패: {e}")
+        else:
+            log_cb("● VB-Audio CABLE: 미설치 (건너뜀)")
+
+    log_cb("─" * 38)
+    if needs_reboot:
+        log_cb(f"완료. {t('reboot_required')}")
+    else:
+        log_cb("✓ 완료.")
+    log_cb(f"앱 폴더: {DATA_DIR}")
+    return needs_reboot
+
+
+# ── 제거 창 ───────────────────────────────────────────────────────────
+def _uninstall_window_fn() -> None:
+    _apply_ctk_theme()
+
+    unity_path  = _find_unitycapture()
+    vbc_path    = _find_vbcable_uninstaller()
+    camera_apps = _get_camera_apps()
+
+    root = ctk.CTk() if HAVE_CTK else ctk.Tk()   # type: ignore
+    root.title(t('uninstall_title'))
+    root.resizable(False, False)
+    root.geometry("500x600")
+
+    if not HAVE_CTK:
+        ctk.Label(root, text=t('uninstall_title')).pack(pady=20)   # type: ignore
+        ctk.Button(root, text=t('close'), command=root.destroy).pack()  # type: ignore
+        root.mainloop()
+        return
+
+    ctk.CTkLabel(root, text=t('uninstall_title'),
+                 font=('', 16, 'bold'), text_color='#ff3b30').pack(pady=(20, 4))
+    ctk.CTkLabel(root, text=t('uninstall_warning'),
+                 text_color='#ffa500').pack(pady=(0, 14))
+
+    # ── 제거 항목 체크박스 ───────────────────────────────────────────
+    ctk.CTkLabel(root, text=t('remove_items'), anchor='w').pack(fill='x', padx=24)
+
+    ctk.CTkLabel(root, text=f"  ✓ {t('remove_configs')}",
+                 anchor='w', text_color='gray').pack(fill='x', padx=24)
+
+    def _item_label(base_key: str, found: bool) -> str:
+        badge = t('detected') if found else t('not_detected')
+        return f"{t(base_key)}  [{badge}]"
+
+    uc_var = ctk.BooleanVar(value=unity_path is not None)
+    ctk.CTkCheckBox(root, text=_item_label('remove_unity', unity_path is not None),
+                    variable=uc_var,
+                    state='normal' if unity_path else 'disabled'
+                    ).pack(anchor='w', padx=40, pady=2)
+
+    vbc_var = ctk.BooleanVar(value=False)   # 기본 off: 다른 앱이 쓸 수 있음
+    ctk.CTkCheckBox(root, text=_item_label('remove_vbcable', vbc_path is not None),
+                    variable=vbc_var,
+                    state='normal' if vbc_path else 'disabled'
+                    ).pack(anchor='w', padx=40, pady=(2, 12))
+
+    # ── 카메라 사용 중인 프로세스 목록 ──────────────────────────────
+    if camera_apps:
+        ctk.CTkLabel(root, text=f"⚠  {t('close_apps_warning')}",
+                     text_color='#ffa500', anchor='w').pack(fill='x', padx=24)
+
+        app_frame = ctk.CTkScrollableFrame(root, height=90)
+        app_frame.pack(fill='x', padx=24, pady=(4, 10))
+
+        def _make_kill_row(frame, name: str, pid: int) -> None:
+            row = ctk.CTkFrame(frame, fg_color='transparent')
+            row.pack(fill='x', pady=1)
+            ctk.CTkLabel(row, text=f"  {name}  (PID {pid})", anchor='w').pack(side='left')
+            def _kill(r=row, p=pid):
+                _kill_pid(p)
+                r.destroy()
+            ctk.CTkButton(row, text=t('kill_process'), width=56, height=24,
+                          fg_color='#ff3b30', command=_kill).pack(side='right')
+
+        for name, pid in camera_apps:
+            _make_kill_row(app_frame, name, pid)
+
+    # ── 로그 박스 ────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text=t('log'), anchor='w').pack(fill='x', padx=24)
+    log_box = ctk.CTkTextbox(root, height=110, state='disabled')
+    log_box.pack(fill='x', padx=24, pady=(4, 10))
+
+    def _log(msg: str) -> None:
+        log_box.configure(state='normal')
+        log_box.insert('end', msg + '\n')
+        log_box.see('end')
+        log_box.configure(state='disabled')
+        root.update()
+
+    done = [False]
+
+    def _run_uninstall() -> None:
+        if done[0]:
+            return
+        done[0] = True
+        btn_run.configure(state='disabled')
+        btn_cancel.configure(state='disabled')
+
+        needs_reboot = _do_uninstall(uc_var.get(), vbc_var.get(), _log)
+
+        # 완료 후 버튼 교체
+        extra = ctk.CTkFrame(root, fg_color='transparent')
+        extra.pack(fill='x', padx=24, pady=(0, 4))
+        ctk.CTkButton(
+            extra, text=t('open_folder'), fg_color='gray30',
+            command=lambda: __import__('subprocess').Popen(
+                ['explorer', str(DATA_DIR)])
+        ).pack(side='left', expand=True, fill='x', padx=(0, 6))
+        ctk.CTkButton(
+            extra, text=t('quit'),
+            command=lambda: [_on_quit(None), root.destroy()],
+            fg_color='#ff3b30',
+        ).pack(side='right', expand=True, fill='x')
+
+    # ── 실행/취소 버튼 ───────────────────────────────────────────────
+    btn_row = ctk.CTkFrame(root, fg_color='transparent')
+    btn_row.pack(fill='x', padx=24, pady=6)
+    btn_cancel = ctk.CTkButton(btn_row, text=t('cancel'), command=root.destroy,
+                                fg_color='gray30')
+    btn_cancel.pack(side='left', expand=True, fill='x', padx=(0, 6))
+    btn_run = ctk.CTkButton(btn_row, text=t('uninstall_btn'),
+                             command=_run_uninstall, fg_color='#ff3b30')
+    btn_run.pack(side='right', expand=True, fill='x')
 
     root.mainloop()
 
