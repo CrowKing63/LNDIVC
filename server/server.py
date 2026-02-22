@@ -248,18 +248,25 @@ async def run_server():
 
     global g_cam, g_audio_out
 
-    # 가상 카메라 초기화 (없으면 None으로 진행)
+    # 가상 카메라 초기화 (백엔드 자동 폴백: obs → unitycapture → 기본)
     cam_ctx = None
     if HAVE_VIRTUALCAM:
-        try:
-            cam_ctx = pyvirtualcam.Camera(
-                width=VIDEO_WIDTH, height=VIDEO_HEIGHT, fps=VIDEO_FPS, print_fps=False
-            )
-            g_cam = cam_ctx.__enter__()
-            log.info(f"가상 카메라 활성화: {g_cam.device}")
-        except Exception as e:
-            log.warning(f"가상 카메라 초기화 실패 (Windows/OBS 환경 필요): {e}")
-            cam_ctx = None
+        backends = ['obs', 'unitycapture', None]   # None = pyvirtualcam 기본값
+        for backend in backends:
+            try:
+                kwargs = dict(width=VIDEO_WIDTH, height=VIDEO_HEIGHT,
+                              fps=VIDEO_FPS, print_fps=False)
+                if backend is not None:
+                    kwargs['backend'] = backend
+                cam_ctx = pyvirtualcam.Camera(**kwargs)
+                g_cam = cam_ctx.__enter__()
+                log.info(f"가상 카메라 활성화: {g_cam.device} (backend={backend or 'default'})")
+                break
+            except Exception as e:
+                log.warning(f"가상 카메라 백엔드 '{backend}' 실패: {e}")
+                cam_ctx = None
+        if g_cam is None:
+            log.warning("가상 카메라 초기화 실패 - 비디오 출력 비활성화")
     else:
         log.warning("pyvirtualcam 없음 → 비디오 출력 비활성화")
 
