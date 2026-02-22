@@ -25,13 +25,14 @@ def get_tailscale_hostname() -> "str | None":
     try:
         result = subprocess.run(
             ['tailscale', 'status', '--json'],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, encoding='utf-8', timeout=5
         )
-        if result.returncode == 0:
+        if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
             dns = data.get('Self', {}).get('DNSName', '')
             return dns.rstrip('.') if dns else None
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError,
+            KeyError, UnicodeDecodeError):
         pass
     return None
 
@@ -49,7 +50,7 @@ def setup_tailscale(hostname: str, base_dir: Path) -> bool:
          '--cert-file', str(cert_path),
          '--key-file',  str(key_path),
          hostname],
-        capture_output=True, text=True
+        capture_output=True, text=True, encoding='utf-8'
     )
 
     if result.returncode != 0:
