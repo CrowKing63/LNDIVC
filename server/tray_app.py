@@ -171,6 +171,10 @@ def _build_menu() -> "pystray.Menu":
             t('settings'),
             lambda icon, item: _open_window(_settings_window_fn),
         ),
+        pystray.MenuItem(
+            t('drivers'),
+            lambda icon, item: _open_window(_drivers_window_fn),
+        ),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(
             t('uninstall'),
@@ -422,6 +426,170 @@ def _setup_window_fn() -> None:
     else:
         ctk.Label(root, text=t('setup_title')).pack(pady=10)  # type: ignore
         ctk.Button(root, text=t('close'), command=root.destroy).pack(pady=10)  # type: ignore
+
+    root.mainloop()
+
+
+# ── 드라이버 설치 창 ──────────────────────────────────────────────────
+def _drivers_window_fn() -> None:
+    from install_drivers import (check_unitycapture, check_vbcable,
+                                  install_unitycapture, install_vbcable)
+    _apply_ctk_theme()
+
+    root = ctk.CTk() if HAVE_CTK else ctk.Tk()   # type: ignore
+    root.title(t('drivers_title'))
+    root.resizable(False, False)
+    root.geometry("500x520")
+
+    if not HAVE_CTK:
+        ctk.Label(root, text=t('drivers_title')).pack(pady=20)   # type: ignore
+        ctk.Button(root, text=t('close'), command=root.destroy).pack()  # type: ignore
+        root.mainloop()
+        return
+
+    ctk.CTkLabel(root, text=t('drivers_title'),
+                 font=('', 16, 'bold')).pack(pady=(20, 4))
+    ctk.CTkLabel(root, text=t('drivers_desc'), text_color='gray').pack(pady=(0, 14))
+
+    # ── 드라이버 상태 행 ─────────────────────────────────────────────
+    # 상태 레이블과 설치 버튼을 담는 프레임
+    drv_frame = ctk.CTkFrame(root)
+    drv_frame.pack(fill='x', padx=24, pady=(0, 10))
+
+    unity_ok  = [check_unitycapture()]
+    vbc_ok    = [check_vbcable()]
+
+    def _status_color(ok: bool) -> str:
+        return '#34c759' if ok else '#ff3b30'
+
+    # UnityCapture 행
+    uc_row = ctk.CTkFrame(drv_frame, fg_color='transparent')
+    uc_row.pack(fill='x', padx=12, pady=(10, 4))
+    ctk.CTkLabel(uc_row, text=t('drv_unity_name'), anchor='w').pack(side='left')
+    uc_status = ctk.CTkLabel(uc_row,
+                              text=t('installed') if unity_ok[0] else t('not_installed'),
+                              text_color=_status_color(unity_ok[0]))
+    uc_status.pack(side='right', padx=(8, 0))
+    uc_btn = ctk.CTkButton(uc_row, text=t('install_btn'), width=70,
+                            state='disabled' if unity_ok[0] else 'normal')
+    uc_btn.pack(side='right')
+
+    # VB-Cable 행
+    vbc_row = ctk.CTkFrame(drv_frame, fg_color='transparent')
+    vbc_row.pack(fill='x', padx=12, pady=(4, 10))
+    ctk.CTkLabel(vbc_row, text=t('drv_vbc_name'), anchor='w').pack(side='left')
+    vbc_status = ctk.CTkLabel(vbc_row,
+                               text=t('installed') if vbc_ok[0] else t('not_installed'),
+                               text_color=_status_color(vbc_ok[0]))
+    vbc_status.pack(side='right', padx=(8, 0))
+    vbc_btn = ctk.CTkButton(vbc_row, text=t('install_btn'), width=70,
+                             state='disabled' if vbc_ok[0] else 'normal')
+    vbc_btn.pack(side='right')
+
+    # 요약 레이블
+    all_ok = unity_ok[0] and vbc_ok[0]
+    summary_var = ctk.StringVar(
+        value=t('drv_all_ok') if all_ok else t('drv_missing'))
+    summary_color = '#34c759' if all_ok else '#ffa500'
+    summary_lbl = ctk.CTkLabel(root, textvariable=summary_var,
+                                text_color=summary_color)
+    summary_lbl.pack(pady=(0, 8))
+
+    # ── 로그 박스 ────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text=t('log'), anchor='w').pack(fill='x', padx=24)
+    log_box = ctk.CTkTextbox(root, height=130, state='disabled')
+    log_box.pack(fill='x', padx=24, pady=(4, 10))
+
+    _busy = [False]
+
+    def _log(msg: str) -> None:
+        log_box.configure(state='normal')
+        log_box.insert('end', msg + '\n')
+        log_box.see('end')
+        log_box.configure(state='disabled')
+        root.update()
+
+    def _refresh_status() -> None:
+        unity_ok[0] = check_unitycapture()
+        vbc_ok[0]   = check_vbcable()
+        uc_status.configure(
+            text=t('installed') if unity_ok[0] else t('not_installed'),
+            text_color=_status_color(unity_ok[0]))
+        uc_btn.configure(state='disabled' if unity_ok[0] else 'normal')
+        vbc_status.configure(
+            text=t('installed') if vbc_ok[0] else t('not_installed'),
+            text_color=_status_color(vbc_ok[0]))
+        vbc_btn.configure(state='disabled' if vbc_ok[0] else 'normal')
+        all_done = unity_ok[0] and vbc_ok[0]
+        summary_var.set(t('drv_all_ok') if all_done else t('drv_missing'))
+        summary_lbl.configure(text_color='#34c759' if all_done else '#ffa500')
+
+    def _run_install(fn, label: str) -> None:
+        if _busy[0]:
+            return
+        _busy[0] = True
+        uc_btn.configure(state='disabled')
+        vbc_btn.configure(state='disabled')
+        btn_all.configure(state='disabled')
+        _log(f"\n── {label} ──")
+        try:
+            fn(_log)
+        finally:
+            _refresh_status()
+            _busy[0] = False
+            btn_all.configure(state='normal')
+
+    # 버튼 커맨드 연결
+    uc_btn.configure(
+        command=lambda: threading.Thread(
+            target=_run_install,
+            args=(install_unitycapture, t('drv_unity_name')),
+            daemon=True
+        ).start()
+    )
+    vbc_btn.configure(
+        command=lambda: threading.Thread(
+            target=_run_install,
+            args=(install_vbcable, t('drv_vbc_name')),
+            daemon=True
+        ).start()
+    )
+
+    def _install_all() -> None:
+        if _busy[0]:
+            return
+        _busy[0] = True
+        uc_btn.configure(state='disabled')
+        vbc_btn.configure(state='disabled')
+        btn_all.configure(state='disabled')
+        _log(f"\n── {t('install_all_btn')} ──")
+        try:
+            if not unity_ok[0]:
+                install_unitycapture(_log)
+            if not vbc_ok[0]:
+                install_vbcable(_log)
+        finally:
+            _refresh_status()
+            _busy[0] = False
+            btn_all.configure(state='normal')
+
+    # ── 하단 버튼 ────────────────────────────────────────────────────
+    btn_row = ctk.CTkFrame(root, fg_color='transparent')
+    btn_row.pack(fill='x', padx=24, pady=6)
+
+    ctk.CTkButton(btn_row, text=t('refresh'),
+                  command=_refresh_status,
+                  fg_color='gray30', width=90
+                  ).pack(side='left', padx=(0, 6))
+
+    btn_all = ctk.CTkButton(btn_row, text=t('install_all_btn'),
+                             command=lambda: threading.Thread(
+                                 target=_install_all, daemon=True).start(),
+                             state='normal' if not all_ok else 'disabled')
+    btn_all.pack(side='left', expand=True, fill='x', padx=(0, 6))
+
+    ctk.CTkButton(btn_row, text=t('close'), command=root.destroy,
+                  fg_color='gray30').pack(side='right', width=90)
 
     root.mainloop()
 
