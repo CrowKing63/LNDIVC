@@ -43,7 +43,37 @@ except ImportError:
     HAVE_QR = False
 
 from i18n import t, set_lang, get_lang, LANG_OPTIONS
-import server as srv
+
+# server.py는 av / cv2 등 무거운 패키지에 의존하므로 지연 임포트
+# (가상환경 없이 실행 시 트레이 GUI는 뜨되, 서버 시작 시 오류 안내)
+srv = None
+
+def _import_server():
+    global srv
+    if srv is not None:
+        return True
+    try:
+        import server as _srv
+        srv = _srv
+        return True
+    except ImportError as e:
+        _show_import_error(str(e))
+        return False
+
+def _show_import_error(err: str) -> None:
+    msg = (
+        f"서버 모듈 로드 실패:\n{err}\n\n"
+        "가상환경이 활성화되어 있는지 확인하세요.\n"
+        "setup.bat → start.bat 순서로 실행하세요."
+    )
+    try:
+        import tkinter.messagebox as mb
+        import tkinter as tk
+        _r = tk.Tk(); _r.withdraw()
+        mb.showerror("LNDIVC – 오류", msg)
+        _r.destroy()
+    except Exception:
+        print(f"[LNDIVC 오류] {msg}")
 
 
 # ── 전역 상태 ─────────────────────────────────────────────────────────
@@ -188,6 +218,8 @@ def _server_thread_fn() -> None:
 def start_server() -> None:
     global _server_thread
     if _server_thread and _server_thread.is_alive():
+        return
+    if not _import_server():   # 가상환경 미활성 시 오류 안내 후 중단
         return
     if not (DATA_DIR / "cert.pem").exists():
         _open_window(_setup_window_fn)
@@ -399,6 +431,8 @@ def main() -> None:
     if not HAVE_TRAY:
         # 트레이 불가 → 터미널 폴백
         print("[경고] pystray / Pillow 없음 → 터미널 모드로 실행합니다.")
+        if not _import_server():
+            return
         asyncio.run(srv.run_server())
         return
 
