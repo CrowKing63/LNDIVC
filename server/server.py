@@ -60,6 +60,7 @@ log = logging.getLogger(__name__)
 g_cam: pyvirtualcam.Camera | None = None
 g_audio_out: sd.OutputStream | None = None
 g_audio_buf: asyncio.Queue = asyncio.Queue(maxsize=20)
+g_status_cb: "callable | None" = None   # GUI 상태 콜백 (tray_app 등이 주입)
 
 
 # ── 오디오 큐를 소비해 sounddevice에 전달 ─────────────────────────────
@@ -152,6 +153,8 @@ async def handle_ws(request):
     @pc.on("connectionstatechange")
     async def on_state():
         log.info(f"WebRTC 상태: {pc.connectionState}")
+        if g_status_cb:
+            g_status_cb(pc.connectionState)
         if pc.connectionState in ("failed", "closed", "disconnected"):
             await pc.close()
 
@@ -206,7 +209,8 @@ def _load_config() -> dict:
     return {'mode': 'self_signed', 'hostname': '', 'port': PORT}
 
 
-async def run_server():
+async def run_server(stop_event: "asyncio.Event | None" = None,
+                     on_status: "callable | None" = None):
     # SSL 설정
     cert = DATA_DIR / "cert.pem"
     key  = DATA_DIR / "key.pem"
@@ -246,7 +250,11 @@ async def run_server():
         access_url = f"https://{local_ip}:{PORT}"
         url_note   = "(자체 서명 - Vision Pro에서 cert.pem 신뢰 필요)"
 
-    global g_cam, g_audio_out
+    global g_cam, g_audio_out, g_status_cb
+    if on_status is not None:
+        g_status_cb = on_status
+    if stop_event is None:
+        stop_event = asyncio.Event()
 
     # 가상 카메라 초기화 (백엔드 자동 폴백: obs → unitycapture → 기본)
     cam_ctx = None
@@ -317,7 +325,7 @@ async def run_server():
         # 오디오 큐 소비 태스크 시작
         audio_task = asyncio.ensure_future(audio_writer())
         try:
-            await asyncio.Event().wait()  # 무한 대기
+            await stop_event.wait()   # GUI stop_event 또는 Ctrl+C 대기
         finally:
             audio_task.cancel()
             await runner.cleanup()

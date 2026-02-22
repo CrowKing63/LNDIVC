@@ -16,5 +16,4 @@ if not exist "cert.pem" (
 )
 
 call .venv\Scripts\activate.bat
-python server.py
-pause
+python tray_app.py

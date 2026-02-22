@@ -4,22 +4,26 @@
 # 빌드: build.bat 또는 pyinstaller LNDIVC.spec --noconfirm
 #
 # 출력: dist/LNDIVC/ 폴더 (LNDIVC.exe + 필요 DLL 포함)
-# 배포: dist/LNDIVC/ 폴더 전체를 복사하여 배포
+# 배포: dist/LNDIVC/ 폴더 전체를 ZIP으로 묶어 배포
 #
 
 block_cipher = None
 
 a = Analysis(
-    ['server.py'],
+    ['tray_app.py'],
     pathex=[],
     binaries=[],
     datas=[
         # static 웹 리소스
         ('static', 'static'),
-        # 인증서 생성 모듈 (setup_wizard.py가 import)
+        # 인증서 생성 모듈
         ('generate_cert.py', '.'),
-        # 설정 마법사 (LNDIVC.exe --setup 으로 호출 가능)
+        # 설정 마법사
         ('setup_wizard.py', '.'),
+        # i18n 모듈
+        ('i18n.py', '.'),
+        # customtkinter 테마 파일
+        ('server.py', '.'),
     ],
     hiddenimports=[
         # aiohttp 내부 모듈
@@ -67,24 +71,34 @@ a = Analysis(
         'cryptography.hazmat.primitives.serialization',
         'cryptography.x509',
         'cryptography.x509.oid',
+        # GUI
+        'pystray',
+        'pystray._win32',
+        'customtkinter',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageDraw',
+        'PIL.ImageTk',
+        'qrcode',
+        'qrcode.image.pil',
+        'tkinter',
+        'tkinter.ttk',
         # JSON / 표준 라이브러리
         'json',
         'ssl',
         'socket',
         'asyncio',
         'subprocess',
+        'threading',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         # 불필요한 대형 패키지 제외
-        'tkinter',
         'matplotlib',
         'scipy',
         'pandas',
-        'PIL',
-        'Pillow',
         'PyQt5',
         'PyQt6',
         'PySide2',
@@ -97,11 +111,12 @@ a = Analysis(
     noarchive=False,
 )
 
-# PyAV / aiortc 패키지 데이터 수집
+# PyAV / aiortc / customtkinter 패키지 데이터 수집
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 a.datas  += collect_data_files('av')
 a.datas  += collect_data_files('aiortc')
+a.datas  += collect_data_files('customtkinter')
 a.binaries += collect_dynamic_libs('av')
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
@@ -116,7 +131,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,          # 콘솔 창 표시 (서버 로그 확인용)
+    console=False,         # 트레이 앱 → 콘솔 창 없음
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
