@@ -256,25 +256,20 @@ async def run_server(stop_event: "asyncio.Event | None" = None,
     if stop_event is None:
         stop_event = asyncio.Event()
 
-    # 가상 카메라 초기화 (백엔드 자동 폴백: obs → unitycapture → 기본)
+    # 가상 카메라 초기화 (OBS Virtual Camera 전용)
     cam_ctx = None
     if HAVE_VIRTUALCAM:
-        backends = ['obs', 'unitycapture', None]   # None = pyvirtualcam 기본값
-        for backend in backends:
-            try:
-                kwargs = dict(width=VIDEO_WIDTH, height=VIDEO_HEIGHT,
-                              fps=VIDEO_FPS, print_fps=False)
-                if backend is not None:
-                    kwargs['backend'] = backend
-                cam_ctx = pyvirtualcam.Camera(**kwargs)
-                g_cam = cam_ctx.__enter__()
-                log.info(f"가상 카메라 활성화: {g_cam.device} (backend={backend or 'default'})")
-                break
-            except Exception as e:
-                log.warning(f"가상 카메라 백엔드 '{backend}' 실패: {e}")
-                cam_ctx = None
-        if g_cam is None:
-            log.warning("가상 카메라 초기화 실패 - 비디오 출력 비활성화")
+        try:
+            cam_ctx = pyvirtualcam.Camera(
+                width=VIDEO_WIDTH, height=VIDEO_HEIGHT,
+                fps=VIDEO_FPS, print_fps=False, backend='obs',
+            )
+            g_cam = cam_ctx.__enter__()
+            log.info(f"가상 카메라 활성화: {g_cam.device} (backend=obs)")
+        except Exception as e:
+            log.warning(f"OBS Virtual Camera 초기화 실패: {e}")
+            log.warning("OBS를 설치하고 '도구 → 가상 카메라 시작'을 먼저 실행하세요.")
+            cam_ctx = None
     else:
         log.warning("pyvirtualcam 없음 → 비디오 출력 비활성화")
 

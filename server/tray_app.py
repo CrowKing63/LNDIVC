@@ -452,16 +452,55 @@ def _setup_window_fn() -> None:
     root.mainloop()
 
 
-# ── 드라이버 설치 창 ──────────────────────────────────────────────────
+# ── OBS 상태 확인 창 ──────────────────────────────────────────────────
+def _check_obs_installed() -> "tuple[bool, str]":
+    """OBS가 설치되어 있고 가상 카메라 DLL을 갖고 있는지 확인.
+    반환: (설치됨, 경로 또는 빈 문자열)"""
+    import subprocess
+    # pyvirtualcam으로 실제 초기화 시도 (가장 확실한 방법)
+    try:
+        import pyvirtualcam
+        with pyvirtualcam.Camera(width=1, height=1, fps=1, backend='obs') as cam:
+            return True, cam.device
+    except Exception:
+        pass
+    # 레지스트리/파일 폴백 확인
+    try:
+        import winreg
+        # OBS 설치 여부
+        for sub in (
+            r'SOFTWARE\OBS Studio',
+            r'SOFTWARE\WOW6432Node\OBS Studio',
+        ):
+            try:
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, sub)
+                return True, 'OBS Studio (가상 카메라 미시작)'
+            except Exception:
+                pass
+    except ImportError:
+        pass
+    return False, ''
+
+
+def _check_vbcable_installed() -> bool:
+    """VB-Audio CABLE Input 장치가 있는지 확인"""
+    try:
+        import sounddevice as sd
+        for dev in sd.query_devices():
+            if 'CABLE Input' in dev['name'] and dev['max_output_channels'] > 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _drivers_window_fn() -> None:
-    from install_drivers import (check_unitycapture, check_vbcable,
-                                  install_unitycapture, install_vbcable)
     _apply_ctk_theme()
 
     root = ctk.CTk() if HAVE_CTK else ctk.Tk()   # type: ignore
     root.title(t('drivers_title'))
     root.resizable(False, False)
-    root.geometry("500x520")
+    root.geometry("500x400")
 
     if not HAVE_CTK:
         ctk.Label(root, text=t('drivers_title')).pack(pady=20)   # type: ignore
@@ -473,159 +512,74 @@ def _drivers_window_fn() -> None:
                  font=('', 16, 'bold')).pack(pady=(20, 4))
     ctk.CTkLabel(root, text=t('drivers_desc'), text_color='gray').pack(pady=(0, 14))
 
-    # ── 드라이버 상태 행 ─────────────────────────────────────────────
-    # 상태 레이블과 설치 버튼을 담는 프레임
-    drv_frame = ctk.CTkFrame(root)
-    drv_frame.pack(fill='x', padx=24, pady=(0, 10))
-
-    unity_ok  = [check_unitycapture()]
-    vbc_ok    = [check_vbcable()]
-
-    def _status_color(ok: bool) -> str:
+    def _sc(ok: bool) -> str:
         return '#34c759' if ok else '#ff3b30'
 
-    # UnityCapture 행
-    uc_row = ctk.CTkFrame(drv_frame, fg_color='transparent')
-    uc_row.pack(fill='x', padx=12, pady=(10, 4))
-    ctk.CTkLabel(uc_row, text=t('drv_unity_name'), anchor='w').pack(side='left')
-    uc_status = ctk.CTkLabel(uc_row,
-                              text=t('installed') if unity_ok[0] else t('not_installed'),
-                              text_color=_status_color(unity_ok[0]))
-    uc_status.pack(side='right', padx=(8, 0))
-    uc_btn = ctk.CTkButton(uc_row, text=t('install_btn'), width=70,
-                            state='disabled' if unity_ok[0] else 'normal')
-    uc_btn.pack(side='right')
+    obs_ok, obs_dev = _check_obs_installed()
+    vbc_ok = _check_vbcable_installed()
 
-    # VB-Cable 행
+    # ── OBS 상태 행 ──────────────────────────────────────────────────
+    drv_frame = ctk.CTkFrame(root)
+    drv_frame.pack(fill='x', padx=24, pady=(0, 6))
+
+    obs_row = ctk.CTkFrame(drv_frame, fg_color='transparent')
+    obs_row.pack(fill='x', padx=12, pady=(10, 2))
+    ctk.CTkLabel(obs_row, text=t('drv_obs_name'), anchor='w').pack(side='left')
+    obs_st = ctk.CTkLabel(obs_row,
+                          text=t('installed') if obs_ok else t('not_installed'),
+                          text_color=_sc(obs_ok))
+    obs_st.pack(side='right')
+
+    if obs_ok and obs_dev:
+        ctk.CTkLabel(drv_frame, text=f"  → {obs_dev}",
+                     text_color='gray', anchor='w').pack(fill='x', padx=12, pady=(0, 4))
+    elif not obs_ok:
+        def _open_obs():
+            import subprocess
+            subprocess.Popen(['start', '', 'https://obsproject.com'], shell=True,
+                             creationflags=0x08000000)
+        ctk.CTkButton(drv_frame, text=t('drv_obs_download'), height=28,
+                      command=_open_obs).pack(padx=12, pady=(2, 6), anchor='w')
+
+    # ── VB-Audio 상태 행 (선택 사항) ─────────────────────────────────
     vbc_row = ctk.CTkFrame(drv_frame, fg_color='transparent')
     vbc_row.pack(fill='x', padx=12, pady=(4, 10))
     ctk.CTkLabel(vbc_row, text=t('drv_vbc_name'), anchor='w').pack(side='left')
-    vbc_status = ctk.CTkLabel(vbc_row,
-                               text=t('installed') if vbc_ok[0] else t('not_installed'),
-                               text_color=_status_color(vbc_ok[0]))
-    vbc_status.pack(side='right', padx=(8, 0))
-    vbc_btn = ctk.CTkButton(vbc_row, text=t('install_btn'), width=70,
-                             state='disabled' if vbc_ok[0] else 'normal')
-    vbc_btn.pack(side='right')
+    ctk.CTkLabel(vbc_row,
+                 text=t('installed') if vbc_ok else t('drv_vbc_optional'),
+                 text_color=_sc(vbc_ok) if vbc_ok else 'gray').pack(side='right')
 
-    # 요약 레이블
-    all_ok = unity_ok[0] and vbc_ok[0]
-    summary_var = ctk.StringVar(
-        value=t('drv_all_ok') if all_ok else t('drv_missing'))
-    summary_color = '#34c759' if all_ok else '#ffa500'
-    summary_lbl = ctk.CTkLabel(root, textvariable=summary_var,
-                                text_color=summary_color)
-    summary_lbl.pack(pady=(0, 8))
+    # ── 요약 ─────────────────────────────────────────────────────────
+    if obs_ok:
+        sum_text  = t('drv_obs_ok')
+        sum_color = '#34c759'
+    else:
+        sum_text  = t('drv_obs_missing')
+        sum_color = '#ff3b30'
+    ctk.CTkLabel(root, text=sum_text, text_color=sum_color).pack(pady=(0, 10))
 
-    # ── 로그 박스 ────────────────────────────────────────────────────
-    ctk.CTkLabel(root, text=t('log'), anchor='w').pack(fill='x', padx=24)
-    log_box = ctk.CTkTextbox(root, height=130, state='disabled')
-    log_box.pack(fill='x', padx=24, pady=(4, 10))
+    # ── OBS 가상 카메라 사용 안내 ─────────────────────────────────────
+    hint = ctk.CTkFrame(root, fg_color='gray17')
+    hint.pack(fill='x', padx=24, pady=(0, 10))
+    ctk.CTkLabel(hint, text=t('drv_obs_hint'), anchor='w', justify='left',
+                 wraplength=420).pack(padx=12, pady=8)
 
-    _busy = [False]
-
-    def _log(msg: str) -> None:
-        # root.after()는 다른 스레드에서 호출해도 안전한 tkinter 유일한 메서드
-        def _update():
-            log_box.configure(state='normal')
-            log_box.insert('end', msg + '\n')
-            log_box.see('end')
-            log_box.configure(state='disabled')
-        root.after(0, _update)
-
-    def _refresh_status() -> None:
-        def _do():
-            unity_ok[0] = check_unitycapture()
-            vbc_ok[0]   = check_vbcable()
-            uc_status.configure(
-                text=t('installed') if unity_ok[0] else t('not_installed'),
-                text_color=_status_color(unity_ok[0]))
-            uc_btn.configure(state='disabled' if unity_ok[0] else 'normal')
-            vbc_status.configure(
-                text=t('installed') if vbc_ok[0] else t('not_installed'),
-                text_color=_status_color(vbc_ok[0]))
-            vbc_btn.configure(state='disabled' if vbc_ok[0] else 'normal')
-            all_done = unity_ok[0] and vbc_ok[0]
-            summary_var.set(t('drv_all_ok') if all_done else t('drv_missing'))
-            summary_lbl.configure(text_color='#34c759' if all_done else '#ffa500')
-        root.after(0, _do)
-
-    def _run_install(fn, label: str) -> None:
-        if _busy[0]:
-            return
-        _busy[0] = True
-        root.after(0, lambda: uc_btn.configure(state='disabled'))
-        root.after(0, lambda: vbc_btn.configure(state='disabled'))
-        root.after(0, lambda: btn_all.configure(state='disabled'))
-        _log(f"\n── {label} ──")
-        try:
-            fn(_log)
-        finally:
-            _refresh_status()
-            _busy[0] = False
-            root.after(0, lambda: btn_all.configure(state='normal'))
-
-    # 버튼 커맨드 연결
-    uc_btn.configure(
-        command=lambda: threading.Thread(
-            target=_run_install,
-            args=(install_unitycapture, t('drv_unity_name')),
-            daemon=True
-        ).start()
-    )
-    vbc_btn.configure(
-        command=lambda: threading.Thread(
-            target=_run_install,
-            args=(install_vbcable, t('drv_vbc_name')),
-            daemon=True
-        ).start()
-    )
-
-    def _install_all() -> None:
-        if _busy[0]:
-            return
-        _busy[0] = True
-        root.after(0, lambda: uc_btn.configure(state='disabled'))
-        root.after(0, lambda: vbc_btn.configure(state='disabled'))
-        root.after(0, lambda: btn_all.configure(state='disabled'))
-        _log(f"\n── {t('install_all_btn')} ──")
-        try:
-            if not unity_ok[0]:
-                install_unitycapture(_log)
-            if not vbc_ok[0]:
-                install_vbcable(_log)
-        finally:
-            _refresh_status()
-            _busy[0] = False
-            root.after(0, lambda: btn_all.configure(state='normal'))
-
-    # ── 하단 버튼 ────────────────────────────────────────────────────
-    btn_row = ctk.CTkFrame(root, fg_color='transparent')
-    btn_row.pack(fill='x', padx=24, pady=6)
-
-    ctk.CTkButton(btn_row, text=t('refresh'),
-                  command=_refresh_status,
-                  fg_color='gray30', width=90
-                  ).pack(side='left', padx=(0, 6))
-
-    btn_all = ctk.CTkButton(btn_row, text=t('install_all_btn'),
-                             command=lambda: threading.Thread(
-                                 target=_install_all, daemon=True).start(),
-                             state='normal' if not all_ok else 'disabled')
-    btn_all.pack(side='left', expand=True, fill='x', padx=(0, 6))
-
-    ctk.CTkButton(btn_row, text=t('close'), command=root.destroy,
-                  fg_color='gray30', width=90).pack(side='right')
+    # ── 닫기 버튼 ────────────────────────────────────────────────────
+    ctk.CTkButton(root, text=t('close'), command=root.destroy,
+                  fg_color='gray30').pack(padx=24, pady=(0, 16), fill='x')
 
     root.mainloop()
 
 
 # ── 제거 헬퍼 ─────────────────────────────────────────────────────────
-_UNITY_CLSID = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
+def _open_browser(url: str) -> None:
+    import subprocess
+    subprocess.Popen(['start', '', url], shell=True, creationflags=0x08000000)
 
 
 def _find_unitycapture() -> "str | None":
-    """레지스트리 또는 설치 경로에서 UnityCapture DLL 경로 반환"""
+    """구버전 UnityCapture 잔재 탐색 (정리 목적)"""
+    _UNITY_CLSID = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
     try:
         import winreg
         sub = rf'CLSID\{_UNITY_CLSID}\InprocServer32'
@@ -656,168 +610,20 @@ def _find_unitycapture() -> "str | None":
     return None
 
 
-def _find_vbcable_uninstaller() -> "str | None":
-    """레지스트리 또는 알려진 경로에서 VB-Cable 제거 프로그램 탐색"""
-    try:
-        import winreg
-        subkeys = (
-            r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable',
-            r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\VB-Audio Virtual Cable',
-        )
-        for root_hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-            for sub in subkeys:
-                try:
-                    key = winreg.OpenKey(root_hive, sub)
-                    val, _ = winreg.QueryValueEx(key, 'UninstallString')
-                    winreg.CloseKey(key)
-                    if val:
-                        return val
-                except Exception:
-                    pass
-    except ImportError:
-        pass
-    for p in (
-        r'C:\Program Files\VB\CABLE\VBCABLE_Setup_x64.exe',
-        r'C:\Program Files (x86)\VB\CABLE\VBCABLE_Setup_x64.exe',
-    ):
-        if Path(p).exists():
-            return p
-    return None
-
-
-def _get_camera_apps() -> "list[tuple[str, int]]":
-    """가상 카메라를 점유할 수 있는 실행 중 프로세스 목록 반환"""
-    targets = {
-        'zoom.exe', 'teams.exe', 'obs64.exe', 'obs32.exe', 'obs.exe',
-        'chrome.exe', 'firefox.exe', 'msedge.exe', 'slack.exe',
-        'discord.exe', 'webex.exe', 'skype.exe', 'msteams.exe',
-    }
-    result = []
-    try:
-        import subprocess
-        out = subprocess.check_output(
-            ['tasklist', '/fo', 'csv', '/nh'],
-            creationflags=0x08000000,   # CREATE_NO_WINDOW
-        ).decode('utf-8', errors='replace')
-        for line in out.splitlines():
-            parts = line.strip('"').split('","')
-            if len(parts) >= 2 and parts[0].lower() in targets:
-                try:
-                    result.append((parts[0], int(parts[1])))
-                except ValueError:
-                    pass
-    except Exception:
-        pass
-    return result
-
-
-def _kill_pid(pid: int) -> None:
-    import subprocess
-    subprocess.run(['taskkill', '/PID', str(pid), '/F'],
-                   capture_output=True, creationflags=0x08000000)
-
-
-def _schedule_delete(path: str) -> bool:
-    """MoveFileExW DELAY_UNTIL_REBOOT: 재부팅 후 파일 삭제 예약"""
-    try:
-        import ctypes
-        return bool(ctypes.windll.kernel32.MoveFileExW(path, None, 4))
-    except Exception:
-        return False
-
-
-def _del_reg_tree(hive, path: str) -> None:
-    """레지스트리 키와 모든 하위 키를 재귀적으로 삭제 (없으면 무시)"""
-    import winreg
-    try:
-        key = winreg.OpenKey(hive, path,
-                             access=winreg.KEY_READ | winreg.KEY_WRITE | winreg.KEY_ENUMERATE_SUB_KEYS)
-    except FileNotFoundError:
-        return
-    while True:
-        try:
-            sub = winreg.EnumKey(key, 0)
-            _del_reg_tree(hive, path + '\\' + sub)
-        except OSError:
-            break
-    winreg.CloseKey(key)
-    try:
-        winreg.DeleteKey(hive, path)
-    except Exception:
-        pass
-
-
-def _unregister_unity_clsid() -> bool:
+def _do_uninstall(log_cb: "callable") -> None:
     """
-    regsvr32를 사용하지 않고 레지스트리에서 직접 CLSID를 삭제.
-    DLL의 DllUnregisterServer를 호출하지 않으므로 팝업이 발생하지 않음.
+    실제 제거 수행 — 백그라운드 스레드에서 실행.
+    1) 서버 중지
+    2) 설정·인증서 파일 삭제
+    3) 구버전 UnityCapture DLL 잔재 정리 (있으면)
+    4) .venv 폴더: 현재 프로세스가 물고 있으므로 지연 삭제 스크립트 생성
     """
-    import winreg, subprocess, tempfile, os
-    clsid = _UNITY_CLSID
+    import subprocess, shutil, tempfile, os, sys
 
-    # 1. HKCU — 관리자 권한 불필요
-    for hkcu_path in [
-        rf'Software\Classes\CLSID\{clsid}',
-        rf'Software\Classes\WOW6432Node\CLSID\{clsid}',
-    ]:
-        _del_reg_tree(winreg.HKEY_CURRENT_USER, hkcu_path)
-
-    # 2. HKLM — 임시 ps1 파일을 통해 UAC 상승 후 삭제 (CLSID 중괄호 퀴팅 문제 회피)
-    ps_script = f"""\
-$clsid = '{clsid}'
-$keys = @(
-    "HKLM:\\SOFTWARE\\Classes\\CLSID\\$clsid",
-    "HKLM:\\SOFTWARE\\Classes\\WOW6432Node\\CLSID\\$clsid",
-    "HKCR:\\CLSID\\$clsid"
-)
-foreach ($k in $keys) {{
-    if (Test-Path $k) {{
-        Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue
-    }}
-}}
-"""
-    ps1_path = ''
-    try:
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1',
-                                        delete=False, encoding='utf-8') as f:
-            f.write(ps_script)
-            ps1_path = f.name
-
-        subprocess.run(
-            ['powershell', '-Command',
-             f'Start-Process powershell '
-             f'-ArgumentList "-ExecutionPolicy Bypass -File `"{ps1_path}`"" '
-             f'-Verb RunAs -Wait'],
-            creationflags=0x08000000,
-            timeout=30,
-        )
-    except Exception:
-        pass
-    finally:
-        if ps1_path:
-            try:
-                os.unlink(ps1_path)
-            except Exception:
-                pass
-
-    return True
-
-
-def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
-                  log_cb: "callable") -> bool:
-    """
-    실제 제거 수행.
-    log_cb(str) : UI 로그 갱신 콜백
-    반환: 재부팅 필요 여부 (True = 재부팅 권고)
-    """
-    import subprocess
-    needs_reboot = False
-
-    # 1. 서버 중지
     log_cb("● 서버 중지 중...")
     stop_server()
 
-    # 2. 설정·인증서 파일 삭제
+    # 설정·인증서 파일 삭제
     log_cb("● 설정 파일 삭제 중...")
     for fname in ('cert.pem', 'key.pem', 'config.json'):
         p = DATA_DIR / fname
@@ -828,77 +634,63 @@ def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
             except Exception as e:
                 log_cb(f"  ✗ {fname}: {e}")
 
-    # 3. UnityCapture 드라이버 제거
-    if remove_unity:
-        unity_path = _find_unitycapture()
-        if unity_path:
-            log_cb("● UnityCapture 드라이버 등록 해제 중...")
+    # 구버전 UnityCapture DLL 잔재 정리
+    legacy = _find_unitycapture()
+    if legacy:
+        log_cb("● 구버전 UnityCapture DLL 잔재 발견 — 삭제 시도...")
+        try:
+            Path(legacy).unlink(missing_ok=True)
+            log_cb(f"  ✓ {legacy}")
+        except Exception as e:
+            log_cb(f"  ✗ {legacy}: {e}")
+    # APPDATA/LNDIVC/drivers 폴더 삭제
+    try:
+        import os as _os
+        drivers_dir = Path(_os.environ.get('APPDATA', '')) / 'LNDIVC' / 'drivers'
+        if drivers_dir.exists():
+            shutil.rmtree(drivers_dir, ignore_errors=True)
+            log_cb(f"  ✓ {drivers_dir}")
+    except Exception:
+        pass
 
-            # IFilterMapper2 점유 방지: 카메라 관련 프로세스를 먼저 종료
-            # (OBS 등이 살아있으면 DLL 내부에서 팝업 오류 발생)
-            blocking = _get_camera_apps()
-            if blocking:
-                log_cb("  ↳ DirectShow 점유 프로세스 종료 중...")
-                for bname, bpid in blocking:
-                    log_cb(f"    강제 종료: {bname} (PID {bpid})")
-                    _kill_pid(bpid)
-                import time
-                time.sleep(1.5)   # COM 객체 해제 대기
-
-            _unregister_unity_clsid()
-            log_cb("  ✓ CLSID 레지스트리 삭제 완료")
-
-            # .ax 파일 삭제 시도
-            log_cb(f"  파일 삭제 시도: {unity_path}")
-            try:
-                Path(unity_path).unlink()
-                log_cb("  ✓ 파일 삭제 완료")
-            except PermissionError:
-                # 프로세스가 파일을 물고 있음 → 재부팅 후 삭제 예약
-                if _schedule_delete(unity_path):
-                    log_cb("  ↻ 파일 삭제 예약됨 (재부팅 후 자동 삭제)")
-                    needs_reboot = True
-                else:
-                    log_cb(f"  ✗ 파일 삭제 실패 — 직접 삭제 필요:\n    {unity_path}")
-            except Exception as e:
-                log_cb(f"  ✗ 파일 삭제 실패: {e}")
-        else:
-            log_cb("● UnityCapture: 미설치 (건너뜀)")
-
-    # 4. VB-Cable 제거
-    if remove_vbcable:
-        vbc = _find_vbcable_uninstaller()
-        if vbc:
-            log_cb("● VB-Audio CABLE 제거 실행 중 (UAC 창이 열릴 수 있음)...")
-            try:
-                subprocess.Popen([vbc], creationflags=0x08000000)
-                log_cb("  ✓ 제거 프로그램 실행됨")
-            except Exception as e:
-                log_cb(f"  ✗ 실행 실패: {e}")
-        else:
-            log_cb("● VB-Audio CABLE: 미설치 (건너뜀)")
+    # .venv: 실행 중인 Python이 물고 있어 직접 삭제 불가
+    # → 앱 종료 후 자동 삭제되는 bat 파일을 %TEMP%에 생성
+    venv_dir = DATA_DIR / '.venv'
+    if venv_dir.exists():
+        log_cb(f"● .venv 폴더 삭제 예약 중...")
+        try:
+            pid = os.getpid()
+            bat = Path(tempfile.gettempdir()) / 'lndivc_cleanup.bat'
+            bat.write_text(
+                f'@echo off\r\n'
+                f':wait\r\n'
+                f'tasklist /FI "PID eq {pid}" 2>nul | find /I "{pid}" >nul\r\n'
+                f'if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n'
+                f'rmdir /s /q "{venv_dir}"\r\n'
+                f'del "%~f0"\r\n',
+                encoding='mbcs',
+            )
+            subprocess.Popen(['cmd', '/c', str(bat)],
+                             creationflags=0x08000008,   # CREATE_NO_WINDOW | DETACHED_PROCESS
+                             close_fds=True)
+            log_cb(f"  ↻ 앱 종료 후 자동 삭제됩니다: {venv_dir}")
+        except Exception as e:
+            log_cb(f"  ✗ 예약 실패: {e}")
+            log_cb(f"    수동 삭제: {venv_dir}")
 
     log_cb("─" * 38)
-    if needs_reboot:
-        log_cb(f"완료. {t('reboot_required')}")
-    else:
-        log_cb("✓ 완료.")
+    log_cb("✓ 완료. 아래 '앱 폴더 열기'로 나머지 파일도 확인하세요.")
     log_cb(f"앱 폴더: {DATA_DIR}")
-    return needs_reboot
 
 
 # ── 제거 창 ───────────────────────────────────────────────────────────
 def _uninstall_window_fn() -> None:
     _apply_ctk_theme()
 
-    unity_path  = _find_unitycapture()
-    vbc_path    = _find_vbcable_uninstaller()
-    camera_apps = _get_camera_apps()
-
     root = ctk.CTk() if HAVE_CTK else ctk.Tk()   # type: ignore
     root.title(t('uninstall_title'))
-    root.resizable(False, True)   # 세로만 허용 — 콘텐츠 양에 따라 자동 높이
-    root.minsize(500, 420)
+    root.resizable(False, False)
+    root.geometry("500x420")
 
     if not HAVE_CTK:
         ctk.Label(root, text=t('uninstall_title')).pack(pady=20)   # type: ignore
@@ -909,56 +701,21 @@ def _uninstall_window_fn() -> None:
     ctk.CTkLabel(root, text=t('uninstall_title'),
                  font=('', 16, 'bold'), text_color='#ff3b30').pack(pady=(20, 4))
     ctk.CTkLabel(root, text=t('uninstall_warning'),
-                 text_color='#ffa500').pack(pady=(0, 14))
+                 text_color='#ffa500').pack(pady=(0, 10))
 
-    # ── 제거 항목 체크박스 ───────────────────────────────────────────
-    ctk.CTkLabel(root, text=t('remove_items'), anchor='w').pack(fill='x', padx=24)
-
-    ctk.CTkLabel(root, text=f"  ✓ {t('remove_configs')}",
-                 anchor='w', text_color='gray').pack(fill='x', padx=24)
-
-    def _item_label(base_key: str, found: bool) -> str:
-        badge = t('detected') if found else t('not_detected')
-        return f"{t(base_key)}  [{badge}]"
-
-    uc_var = ctk.BooleanVar(value=unity_path is not None)
-    ctk.CTkCheckBox(root, text=_item_label('remove_unity', unity_path is not None),
-                    variable=uc_var,
-                    state='normal' if unity_path else 'disabled'
-                    ).pack(anchor='w', padx=40, pady=2)
-
-    vbc_var = ctk.BooleanVar(value=False)   # 기본 off: 다른 앱이 쓸 수 있음
-    ctk.CTkCheckBox(root, text=_item_label('remove_vbcable', vbc_path is not None),
-                    variable=vbc_var,
-                    state='normal' if vbc_path else 'disabled'
-                    ).pack(anchor='w', padx=40, pady=(2, 12))
-
-    # ── 카메라 사용 중인 프로세스 목록 ──────────────────────────────
-    if camera_apps:
-        ctk.CTkLabel(root, text=f"⚠  {t('close_apps_warning')}",
-                     text_color='#ffa500', anchor='w').pack(fill='x', padx=24)
-
-        # CTkScrollableFrame은 pack에서 남은 공간을 전부 점유하므로
-        # 일반 CTkFrame 사용 (목록이 많아야 3~4개)
-        app_frame = ctk.CTkFrame(root, fg_color='gray17')
-        app_frame.pack(fill='x', padx=24, pady=(4, 10))
-
-        def _make_kill_row(frame, name: str, pid: int) -> None:
-            row = ctk.CTkFrame(frame, fg_color='transparent')
-            row.pack(fill='x', padx=8, pady=2)
-            ctk.CTkLabel(row, text=f"{name}  (PID {pid})", anchor='w').pack(side='left')
-            def _kill(r=row, p=pid):
-                _kill_pid(p)
-                r.destroy()
-            ctk.CTkButton(row, text=t('kill_process'), width=70, height=26,
-                          fg_color='#ff3b30', command=_kill).pack(side='right')
-
-        for name, pid in camera_apps:
-            _make_kill_row(app_frame, name, pid)
+    # ── 제거할 항목 안내 ─────────────────────────────────────────────
+    info = ctk.CTkFrame(root, fg_color='gray17')
+    info.pack(fill='x', padx=24, pady=(0, 12))
+    for line in (
+        f"  ✓ {t('remove_configs')}",
+        f"  ✓ {t('remove_venv')}",
+    ):
+        ctk.CTkLabel(info, text=line, anchor='w', text_color='gray').pack(
+            fill='x', padx=8, pady=1)
 
     # ── 로그 박스 ────────────────────────────────────────────────────
     ctk.CTkLabel(root, text=t('log'), anchor='w').pack(fill='x', padx=24)
-    log_box = ctk.CTkTextbox(root, height=90, state='disabled')
+    log_box = ctk.CTkTextbox(root, height=100, state='disabled')
     log_box.pack(fill='x', padx=24, pady=(4, 6))
 
     def _log(msg: str) -> None:
@@ -971,28 +728,33 @@ def _uninstall_window_fn() -> None:
 
     done = [False]
 
+    def _worker():
+        """백그라운드 스레드에서 제거 실행 (GUI 프리즈 방지)"""
+        _do_uninstall(_log)
+        # 완료 후 버튼 전환 (root.after로 GUI 스레드에서 실행)
+        def _on_done():
+            btn_row.pack_forget()
+            extra = ctk.CTkFrame(root, fg_color='transparent')
+            extra.pack(fill='x', padx=24, pady=(0, 16))
+            import subprocess as _sp
+            ctk.CTkButton(
+                extra, text=t('open_folder'), fg_color='gray30',
+                command=lambda: _sp.Popen(['explorer', str(DATA_DIR)])
+            ).pack(side='left', expand=True, fill='x', padx=(0, 6))
+            ctk.CTkButton(
+                extra, text=t('quit'),
+                command=lambda: [_on_quit(None), root.destroy()],
+                fg_color='#ff3b30',
+            ).pack(side='right', expand=True, fill='x')
+        root.after(0, _on_done)
+
     def _run_uninstall() -> None:
         if done[0]:
             return
         done[0] = True
         btn_run.configure(state='disabled')
         btn_cancel.configure(state='disabled')
-
-        needs_reboot = _do_uninstall(uc_var.get(), vbc_var.get(), _log)
-
-        # 완료 후 버튼 교체
-        extra = ctk.CTkFrame(root, fg_color='transparent')
-        extra.pack(fill='x', padx=24, pady=(0, 4))
-        ctk.CTkButton(
-            extra, text=t('open_folder'), fg_color='gray30',
-            command=lambda: __import__('subprocess').Popen(
-                ['explorer', str(DATA_DIR)])
-        ).pack(side='left', expand=True, fill='x', padx=(0, 6))
-        ctk.CTkButton(
-            extra, text=t('quit'),
-            command=lambda: [_on_quit(None), root.destroy()],
-            fg_color='#ff3b30',
-        ).pack(side='right', expand=True, fill='x')
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── 실행/취소 버튼 ───────────────────────────────────────────────
     btn_row = ctk.CTkFrame(root, fg_color='transparent')
