@@ -64,8 +64,8 @@ def _import_server():
 def _show_import_error(err: str) -> None:
     msg = (
         f"서버 모듈 로드 실패:\n{err}\n\n"
-        "가상환경이 활성화되어 있는지 확인하세요.\n"
-        "setup.bat → start.bat 순서로 실행하세요."
+        "LNDIVC 파일이 손상되었거나 백신에 의해 차단되었을 수 있습니다.\n"
+        "다시 다운로드해 보세요."
     )
     try:
         import tkinter.messagebox as mb
@@ -74,7 +74,7 @@ def _show_import_error(err: str) -> None:
         mb.showerror("LNDIVC – 오류", msg)
         _r.destroy()
     except Exception:
-        print(f"[LNDIVC 오류] {msg}")
+        pass
 
 
 # ── 전역 상태 ─────────────────────────────────────────────────────────
@@ -452,6 +452,133 @@ def _setup_window_fn() -> None:
     root.mainloop()
 
 
+# ── 최초 실행 설정 마법사 (메인 스레드, pystray 시작 전) ──────────────
+def _first_run_wizard() -> bool:
+    """
+    config.json 없을 때 최초 실행 시 호출되는 GUI 마법사.
+    메인 스레드에서 pystray 시작 전에 실행됨.
+    완료 시 True, 취소/종료 시 False 반환.
+    """
+    from setup_wizard import (get_tailscale_hostname, setup_tailscale,
+                               setup_self_signed, save_config as wiz_save)
+
+    # CTK 없으면 자동으로 self-signed 설정 후 진행
+    if not HAVE_CTK:
+        ts = get_tailscale_hostname()
+        if ts:
+            ok = setup_tailscale(ts, DATA_DIR)
+            if ok:
+                wiz_save('tailscale', ts, DATA_DIR)
+                return True
+        ok = setup_self_signed(DATA_DIR)
+        if ok:
+            wiz_save('self_signed', '', DATA_DIR)
+        return ok
+
+    _apply_ctk_theme()
+    completed = [False]
+
+    root = ctk.CTk()
+    root.title('LNDIVC')
+    root.resizable(False, False)
+    root.geometry('480x510')
+    root.protocol('WM_DELETE_WINDOW', root.destroy)  # X 클릭 = 취소
+
+    # ── 헤더 ──────────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text='LNDIVC', font=('', 28, 'bold')).pack(pady=(28, 2))
+    ctk.CTkLabel(root, text='Setup Wizard  /  설정 마법사',
+                 font=('', 13), text_color='gray').pack(pady=(0, 22))
+
+    # ── 언어 선택 ──────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text='Language / 언어', anchor='w',
+                 font=('', 12)).pack(fill='x', padx=30)
+    _lang_labels = ['한국어 (ko)', 'English (en)']
+    _lang_codes   = {'한국어 (ko)': 'ko', 'English (en)': 'en'}
+    _lang_reverse = {v: k for k, v in _lang_codes.items()}
+    seg_var = ctk.StringVar(value=_lang_reverse.get(get_lang(), '한국어 (ko)'))
+    seg = ctk.CTkSegmentedButton(root, values=_lang_labels, variable=seg_var)
+    seg.pack(fill='x', padx=30, pady=(6, 22))
+
+    # ── 인증서 방식 ────────────────────────────────────────────────────
+    ctk.CTkLabel(root, text=t('cert_mode'), anchor='w',
+                 font=('', 12)).pack(fill='x', padx=30)
+    ts_host    = get_tailscale_hostname()
+    ts_present = ts_host is not None
+    mode_var   = ctk.StringVar(value='tailscale' if ts_present else 'self_signed')
+
+    ctk.CTkRadioButton(
+        root, text=t('cert_tailscale'), variable=mode_var, value='tailscale',
+        state='normal' if ts_present else 'disabled',
+    ).pack(anchor='w', padx=48, pady=2)
+    ctk.CTkRadioButton(
+        root, text=t('cert_self_signed'), variable=mode_var, value='self_signed',
+    ).pack(anchor='w', padx=48, pady=2)
+
+    ts_info = (f"  ✓ {t('tailscale_detected')}: {ts_host}" if ts_present
+               else f"  {t('tailscale_not_found')}")
+    ctk.CTkLabel(root, text=ts_info,
+                 text_color='#34c759' if ts_present else 'gray',
+                 anchor='w').pack(fill='x', padx=30, pady=(4, 16))
+
+    # ── 상태 라벨 ──────────────────────────────────────────────────────
+    log_var = ctk.StringVar(value='')
+    ctk.CTkLabel(root, textvariable=log_var, wraplength=400,
+                 anchor='w', text_color='gray').pack(fill='x', padx=30, pady=(0, 10))
+
+    # ── 버튼 ───────────────────────────────────────────────────────────
+    btn_row = ctk.CTkFrame(root, fg_color='transparent')
+    btn_row.pack(fill='x', padx=30, pady=(0, 24))
+
+    btn_quit = ctk.CTkButton(btn_row, text='종료 / Exit', fg_color='gray30',
+                              command=root.destroy)
+    btn_quit.pack(side='left', expand=True, fill='x', padx=(0, 6))
+    btn_ok = ctk.CTkButton(btn_row, text='완료 및 시작 / Finish & Start',
+                            command=lambda: _run())
+    btn_ok.pack(side='right', expand=True, fill='x')
+
+    def _run():
+        lang = _lang_codes.get(seg_var.get(), 'ko')
+        set_lang(lang)
+        btn_ok.configure(state='disabled')
+        btn_quit.configure(state='disabled')
+        log_var.set(t('setup_in_progress'))
+        root.update()
+
+        mode = mode_var.get()
+
+        def _worker():
+            ok = False
+            if mode == 'tailscale' and ts_present:
+                ok = setup_tailscale(ts_host, DATA_DIR)
+                if ok:
+                    wiz_save('tailscale', ts_host, DATA_DIR)
+            else:
+                ok = setup_self_signed(DATA_DIR)
+                if ok:
+                    wiz_save('self_signed', '', DATA_DIR)
+            # 언어도 config에 저장
+            if ok:
+                cfg = _load_config()
+                cfg['lang'] = lang
+                _save_config(cfg)
+
+            def _done():
+                if ok:
+                    completed[0] = True
+                    log_var.set(t('setup_done'))
+                    root.after(700, root.destroy)
+                else:
+                    log_var.set(t('setup_failed'))
+                    btn_ok.configure(state='normal')
+                    btn_quit.configure(state='normal')
+            root.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    root.mainloop()
+    return completed[0]
+
+
 # ── OBS 상태 확인 창 ──────────────────────────────────────────────────
 def _check_obs_installed() -> "tuple[bool, str]":
     """OBS가 설치되어 있고 가상 카메라 DLL을 갖고 있는지 확인.
@@ -616,9 +743,9 @@ def _do_uninstall(log_cb: "callable") -> None:
     1) 서버 중지
     2) 설정·인증서 파일 삭제
     3) 구버전 UnityCapture DLL 잔재 정리 (있으면)
-    4) .venv 폴더: 현재 프로세스가 물고 있으므로 지연 삭제 스크립트 생성
+    4) 완전 제거 안내 (앱 종료 후 LNDIVC 폴더 수동 삭제)
     """
-    import subprocess, shutil, tempfile, os, sys
+    import shutil, os as _os
 
     log_cb("● 서버 중지 중...")
     stop_server()
@@ -643,9 +770,9 @@ def _do_uninstall(log_cb: "callable") -> None:
             log_cb(f"  ✓ {legacy}")
         except Exception as e:
             log_cb(f"  ✗ {legacy}: {e}")
+
     # APPDATA/LNDIVC/drivers 폴더 삭제
     try:
-        import os as _os
         drivers_dir = Path(_os.environ.get('APPDATA', '')) / 'LNDIVC' / 'drivers'
         if drivers_dir.exists():
             shutil.rmtree(drivers_dir, ignore_errors=True)
@@ -653,34 +780,10 @@ def _do_uninstall(log_cb: "callable") -> None:
     except Exception:
         pass
 
-    # .venv: 실행 중인 Python이 물고 있어 직접 삭제 불가
-    # → 앱 종료 후 자동 삭제되는 bat 파일을 %TEMP%에 생성
-    venv_dir = DATA_DIR / '.venv'
-    if venv_dir.exists():
-        log_cb(f"● .venv 폴더 삭제 예약 중...")
-        try:
-            pid = os.getpid()
-            bat = Path(tempfile.gettempdir()) / 'lndivc_cleanup.bat'
-            bat.write_text(
-                f'@echo off\r\n'
-                f':wait\r\n'
-                f'tasklist /FI "PID eq {pid}" 2>nul | find /I "{pid}" >nul\r\n'
-                f'if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\n'
-                f'rmdir /s /q "{venv_dir}"\r\n'
-                f'del "%~f0"\r\n',
-                encoding='mbcs',
-            )
-            subprocess.Popen(['cmd', '/c', str(bat)],
-                             creationflags=0x08000008,   # CREATE_NO_WINDOW | DETACHED_PROCESS
-                             close_fds=True)
-            log_cb(f"  ↻ 앱 종료 후 자동 삭제됩니다: {venv_dir}")
-        except Exception as e:
-            log_cb(f"  ✗ 예약 실패: {e}")
-            log_cb(f"    수동 삭제: {venv_dir}")
-
     log_cb("─" * 38)
-    log_cb("✓ 완료. 아래 '앱 폴더 열기'로 나머지 파일도 확인하세요.")
-    log_cb(f"앱 폴더: {DATA_DIR}")
+    log_cb("✓ 완료.")
+    log_cb("  종료 후 아래 폴더를 삭제하면 완전히 제거됩니다:")
+    log_cb(f"  {DATA_DIR}")
 
 
 # ── 제거 창 ───────────────────────────────────────────────────────────
@@ -777,16 +880,30 @@ def main() -> None:
     set_lang(cfg.get('lang', 'ko'))
 
     if not HAVE_TRAY:
-        # 트레이 불가 → 터미널 폴백
-        print("[경고] pystray / Pillow 없음 → 터미널 모드로 실행합니다.")
-        if not _import_server():
-            return
-        asyncio.run(srv.run_server())
+        # pystray/Pillow 미포함 빌드 — 조용히 종료 (터미널 모드 제거)
+        try:
+            import tkinter.messagebox as mb
+            import tkinter as tk
+            _r = tk.Tk(); _r.withdraw()
+            mb.showerror("LNDIVC – 오류",
+                         "필수 구성 요소(pystray/Pillow)가 없습니다.\n"
+                         "파일이 손상되었을 수 있습니다. 다시 다운로드하세요.")
+            _r.destroy()
+        except Exception:
+            pass
         return
 
     if HAVE_CTK:
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
+
+    # ── 최초 실행: config.json 없으면 설정 마법사 실행 ─────────────────
+    if not (DATA_DIR / 'config.json').exists():
+        if not _first_run_wizard():
+            return  # 마법사 취소 → 앱 종료
+        # 마법사 완료 후 설정 다시 로드
+        cfg = _load_config()
+        set_lang(cfg.get('lang', 'ko'))
 
     _icon = pystray.Icon(
         name='LNDIVC',
