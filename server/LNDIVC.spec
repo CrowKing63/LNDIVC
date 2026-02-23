@@ -114,12 +114,13 @@ a = Analysis(
 )
 
 # PyAV / aiortc / customtkinter 패키지 데이터 수집
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+# collect_dynamic_libs 제거: PyInstaller 6.x에서 tuple 형식 불일치 오류 발생,
+# av 바이너리는 PyInstaller 내장 훅이 자동 처리함
+from PyInstaller.utils.hooks import collect_data_files
 
-a.datas  += collect_data_files('av')
-a.datas  += collect_data_files('aiortc')
-a.datas  += collect_data_files('customtkinter')
-a.binaries += collect_dynamic_libs('av')
+a.datas += collect_data_files('av')
+a.datas += collect_data_files('aiortc')
+a.datas += collect_data_files('customtkinter')
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
