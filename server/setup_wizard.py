@@ -12,6 +12,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+# CREATE_NO_WINDOW: 콘솔 창 없이 subprocess 실행 (Windows 전용)
+_CF = 0x08000000 if sys.platform == 'win32' else 0
+
 
 def _base_dir() -> Path:
     """실행 파일 기준 디렉터리 (frozen/non-frozen 공통)"""
@@ -25,7 +28,8 @@ def get_tailscale_hostname() -> "str | None":
     try:
         result = subprocess.run(
             ['tailscale', 'status', '--json'],
-            capture_output=True, text=True, encoding='utf-8', timeout=5
+            capture_output=True, text=True, encoding='utf-8', timeout=5,
+            creationflags=_CF,
         )
         if result.returncode == 0 and result.stdout:
             data = json.loads(result.stdout)
@@ -50,7 +54,8 @@ def setup_tailscale(hostname: str, base_dir: Path) -> bool:
          '--cert-file', str(cert_path),
          '--key-file',  str(key_path),
          hostname],
-        capture_output=True, text=True, encoding='utf-8'
+        capture_output=True, text=True, encoding='utf-8',
+        creationflags=_CF,
     )
 
     if result.returncode != 0:
