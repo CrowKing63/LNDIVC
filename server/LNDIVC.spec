@@ -147,8 +147,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,         # 트레이 앱 → 콘솔 창 없음
+    upx=False,          # UPX 비활성: Python 3.13 DLL 손상 방지
+    console=False,      # 트레이 앱 → 콘솔 창 없음
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -163,7 +163,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='LNDIVC',
 )

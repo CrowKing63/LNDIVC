@@ -1,82 +1,72 @@
 # LNDIVC
 
-**Apple Vision Pro Persona → Windows Virtual Webcam Streamer**
+**Stream your Apple Vision Pro Persona to Windows as a virtual webcam — no visionOS app required.**
 
-Stream your Apple Vision Pro's front-facing persona camera and microphone to your Windows PC over a local network or Tailscale VPN, and expose them as a virtual webcam and microphone to any DirectShow-compatible app — Zoom, Teams, OBS, PlayAbility, and more.
-
-**No visionOS app installation required** — uses Safari on Vision Pro to connect to a local web page.
+LNDIVC captures your Vision Pro's front camera (Persona) and microphone over your local network and feeds them into Windows as a virtual camera and microphone. Any app that accepts a webcam input — Zoom, Teams, OBS, PlayAbility — works out of the box.
 
 ---
 
-## How It Works
+## How it works
 
 ```
-Apple Vision Pro (Safari)
-  └─ getUserMedia() → Persona Camera + Microphone
-       └─ WebRTC  (LAN or Tailscale VPN)
-            └─ Windows  server.py
-                 ├─ Video → OBS Virtual Camera
-                 │             └─ Zoom / Teams / PlayAbility
-                 └─ Audio → VB-Audio CABLE Input
-                               └─ CABLE Output  (mic in Zoom / Teams)
+Vision Pro Safari
+  └─ getUserMedia() → Persona camera + mic
+       └─ WebRTC  (local network or Tailscale VPN)
+            └─ LNDIVC.exe  (Windows)
+                 ├─ Video → OBS Virtual Camera  →  Zoom / Teams / OBS
+                 └─ Audio → VB-Audio CABLE Input →  CABLE Output (mic)
 ```
+
+No visionOS app installation needed. Vision Pro opens a local webpage in Safari; everything else is handled by the Windows app.
 
 ---
 
-## Prerequisites (Windows)
+## Prerequisites
+
+Python is **not** required — it is bundled inside the exe.
 
 | Required | Download |
 |----------|----------|
-| Python 3.11 or later | https://www.python.org |
-| OBS Studio (includes the virtual camera driver) | https://obsproject.com |
-| VB-Audio Virtual Cable *(optional — needed for mic passthrough)* | https://vb-audio.com/Cable |
+| OBS Studio (includes Virtual Camera driver) | https://obsproject.com |
+| VB-Audio Virtual Cable *(optional — for mic input in Zoom/Teams)* | https://vb-audio.com/Cable |
 
-> **OBS note:** After installing OBS, launch it once and click **Tools → Start Virtual Camera** to activate the driver. The virtual camera stays active even after OBS is closed.
-
----
-
-## Installation (one-time setup)
-
-### 1. Download the repository
-
-Download as a ZIP and extract it anywhere on your Windows PC.
-
-### 2. Run setup.bat
-
-Double-click `setup.bat` inside the `server` folder.
-
-- Creates a Python virtual environment and installs all dependencies automatically
-- Launches the certificate setup wizard — choose **Tailscale** or **Self-Signed**
+> **OBS note:** After installing, open OBS once and click **Tools → Start Virtual Camera**. You can close OBS afterwards — the virtual camera driver stays active.
 
 ---
 
-## Certificate Mode
+## Quick Start
 
-HTTPS is required for browser camera access. Choose the mode that fits your setup.
+1. Download **LNDIVC.zip** from the [Releases](../../releases) page
+2. **Extract** the zip (do not run the exe from inside the zip)
+3. Run **LNDIVC.exe**
+4. A setup wizard appears on first launch — choose your language and certificate mode
+5. Done. LNDIVC lives in your system tray.
 
-### Mode A — Tailscale (Recommended)
+Everything — start/stop server, settings, QR code, uninstall — is accessible from the tray icon. No terminal, no command line.
 
-No certificate trust step needed on Vision Pro. Works even when your IP changes.
+---
 
-**Steps:**
+## Certificate Setup
+
+HTTPS is required because browsers block `getUserMedia` on non-secure origins.
+Choose one of two modes on first launch (changeable later via tray → Settings):
+
+### Option A — Tailscale (Recommended)
+
+No certificate trust configuration needed on Vision Pro. Works even if your PC's IP address changes.
+
 1. Install [Tailscale](https://tailscale.com/download) on both your Windows PC and Vision Pro, and sign in to the same account
 2. Go to [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns) → enable **MagicDNS** and **HTTPS**
-3. Run `setup.bat` → select `[1] Tailscale`
+3. In the LNDIVC setup wizard, select **Tailscale** — the certificate is issued automatically
 
-`setup.bat` will automatically issue the certificate using the `tailscale cert` CLI command.
+### Option B — Self-Signed
 
----
+For local network use without Tailscale. Requires a one-time trust step on Vision Pro.
 
-### Mode B — Self-Signed (Local network only)
-
-Use this if you don't have Tailscale.
-
-Run `setup.bat` → select `[2] Self-Signed`, then complete the trust step below:
-
-1. Send `server/cert.pem` to your Vision Pro via **AirDrop** or **email**
-2. Open the file on Vision Pro — a profile installation screen will appear → tap **Install**
-3. Go to **Settings → General → About → Certificate Trust Settings**
-   → enable the toggle for `LNDIVC Local` → tap **Continue**
+1. In the wizard, select **Self-Signed** — `cert.pem` is generated automatically
+2. Transfer `cert.pem` to Vision Pro via **AirDrop or Mail**
+3. Open the file on Vision Pro → install the profile
+4. **Settings → General → About → Certificate Trust Settings** → enable **LNDIVC Local** → Continue
 
 ---
 
@@ -84,29 +74,18 @@ Run `setup.bat` → select `[2] Self-Signed`, then complete the trust step below
 
 ### Windows
 
-1. Double-click `server/start.bat`
-2. Note the URL shown in the terminal
-
-```
-=======================================================
-  LNDIVC Server Running
-  Open the URL below in Vision Pro Safari:
-
-    https://my-pc.tail12345.ts.net:8443   ← Tailscale
-    https://192.168.x.x:8443              ← Self-Signed
-=======================================================
-```
-
-Or launch `LNDIVC.exe` (system tray GUI) if you are using the pre-built executable.
+Right-click the **LNDIVC tray icon** and select **Start Server**.
+The icon turns orange (waiting) and then green once Vision Pro connects.
+Use **Show QR Code** to get the connection URL.
 
 ### Vision Pro
 
-1. Open Safari and navigate to the URL above
+1. Open **Safari** and navigate to the URL shown in the QR code window
 2. Tap **Start Streaming**
-3. Allow camera and microphone permissions
-4. Wait for the status to show **Streaming**
+3. Allow camera and microphone access
+4. The status indicator turns green — streaming is active
 
-### Zoom / Teams / PlayAbility settings
+### Zoom / Teams
 
 | Setting | Value |
 |---------|-------|
@@ -115,204 +94,83 @@ Or launch `LNDIVC.exe` (system tray GUI) if you are using the pre-built executab
 
 ---
 
-## Testing & Verification
+## Tray Menu Reference
 
-You can validate each stage of the pipeline individually, without needing Vision Pro connected.
-
-### Step 1 — Verify server startup
-
-After running `start.bat` (or `python server.py`), confirm the output looks like this:
-
-```
-=======================================================
-  LNDIVC Server Running
-  Open the URL below in Vision Pro Safari:
-
-    https://my-pc.tail12345.ts.net:8443   ← Tailscale
-    https://192.168.x.x:8443              ← Self-Signed
-
-  Virtual Camera: OBS Virtual Camera       ← "Inactive" means OBS is not set up
-  Audio Output:   VB-Audio CABLE Input     ← "Default Speaker" means VB-Cable not found
-=======================================================
-```
-
-| Item | Expected | Problem if wrong |
-|------|----------|-----------------|
-| cert.pem / key.pem | Server starts without errors | Run `setup.bat` first |
-| Virtual Camera | `OBS Virtual Camera` | OBS not installed or virtual cam not started |
-| Audio Output | `VB-Audio CABLE Input` | VB-Audio Cable not installed |
-
----
-
-### Step 2 — Verify HTTPS from your PC browser
-
-Open the server URL in Windows Chrome or Edge to confirm connectivity before using Vision Pro.
-
-1. Navigate to `https://192.168.x.x:8443` (or your Tailscale address)
-2. **Tailscale mode:** padlock icon appears → connection is valid
-3. **Self-signed mode:** "Not secure" warning → click **Advanced → Continue** → page loads
-
-> If the page opens from your PC, the server, certificates, and network are all working correctly.
-
----
-
-### Step 3 — Verify WebSocket signaling (browser DevTools)
-
-Open the page in your PC browser, press F12 → **Network** tab → filter by `WS`.
-
-1. Click **Start Streaming** on the page
-2. Confirm `wss://…/ws` shows a **101 Switching Protocols** status
-3. In the **Messages** tab, verify `offer` and `answer` messages are exchanged
-
----
-
-### Step 4 — Test Vision Pro connection
-
-1. Navigate to the server URL in Vision Pro Safari
-2. Tap **Start Streaming** → grant camera and microphone permissions
-3. Status should change to **✅ Streaming** when WebRTC connects successfully
-4. Confirm the following lines appear in the Windows terminal:
-
-```
-WebRTC state: connected
-Video track received
-Audio track received
-```
-
----
-
-### Step 5 — Verify virtual camera output
-
-1. Open the **Camera** app on Windows → click the switch camera button at the top
-2. Select `OBS Virtual Camera`
-3. If the Vision Pro persona video appears, the video pipeline is working
-
-> You can also verify in OBS Studio's preview window instead of the Camera app.
-
----
-
-### Step 6 — Verify virtual audio output
-
-1. Open Windows **Settings → System → Sound → Volume Mixer**
-2. Select the `CABLE Output (VB-Audio Virtual Cable)` device and speak from Vision Pro
-3. If the level meter moves, the audio pipeline is working
-
----
-
-### Step 7 — Zoom integration test
-
-| Location | Value |
-|----------|-------|
-| Zoom Settings → Video → Camera | `OBS Virtual Camera` |
-| Zoom Settings → Audio → Microphone | `CABLE Output (VB-Audio Virtual Cable)` |
-
-1. Start a Zoom test meeting → confirm persona video appears in the video preview
-2. Test the microphone → record and play back to confirm Vision Pro audio is captured
-
----
-
-### Troubleshooting Decision Table
-
-| Symptom | Suspect step | How to check |
-|---------|--------------|-------------|
-| Server exits immediately | Step 1 | Check that cert.pem / key.pem exist |
-| Page won't open in browser | Step 2 | Allow port 8443 in Windows Firewall |
-| Status stuck at "Negotiating" | Step 3 | Check WS tab in browser DevTools |
-| Connected but no image in Camera app | Step 5 | Enable OBS Virtual Camera |
-| No audio in Zoom microphone | Step 6 | Install VB-Audio Cable and restart Windows |
-
----
-
-## Build a Standalone .exe (Optional)
-
-Generate a self-contained executable that runs on PCs without Python installed.
-
-```
-Double-click server/build.bat
-  → creates dist/LNDIVC/ folder
-```
-
-**Distribution:**
-1. Copy the entire `dist/LNDIVC/` folder to the target PC
-2. Run `LNDIVC.exe --setup` → complete certificate configuration
-3. Run `LNDIVC.exe` → server starts via the system tray GUI
-
-> OBS Studio and VB-Audio Virtual Cable must be installed separately on the target PC.
-
----
-
-## File Structure
-
-```
-LNDIVC/
-├── README.md
-└── server/
-    ├── server.py           # Core server — HTTPS + WebSocket + WebRTC (aiortc)
-    ├── tray_app.py         # System tray GUI (customtkinter + pystray)
-    ├── setup_wizard.py     # Certificate setup wizard (Tailscale / Self-Signed)
-    ├── generate_cert.py    # Self-signed certificate generator
-    ├── i18n.py             # Localization — Korean / English
-    ├── install_drivers.py  # OBS / VB-Audio driver detection
-    ├── requirements.txt    # Python dependencies
-    ├── setup.bat           # First-time setup script
-    ├── start.bat           # Server launch script
-    ├── build.bat           # PyInstaller .exe build script
-    ├── LNDIVC.spec         # PyInstaller configuration
-    └── static/
-        └── index.html      # Vision Pro Safari client page
-```
+| Menu Item | Description |
+|-----------|-------------|
+| Start / Stop Server | Toggle the WebRTC server |
+| Show QR Code | Display connection URL and QR for Vision Pro |
+| Settings | Change language or reconfigure certificate |
+| OBS Status | Check virtual camera and VB-Audio availability |
+| Uninstall | Remove config and certificate files |
+| Quit | Stop server and exit |
 
 ---
 
 ## Troubleshooting
 
-### "This connection is not secure" in Safari (Self-Signed mode)
+**"This connection is not secure" on Vision Pro (Self-Signed mode)**
+→ The certificate trust step was not completed. Tapping through the warning still blocks `getUserMedia`. Complete the profile installation and trust steps, or switch to Tailscale mode.
 
-The certificate trust step was not completed.
-Clicking **Advanced → Visit this website** on the warning page will still block `getUserMedia`. Complete the profile trust step described in [Mode B](#mode-b--self-signed-local-network-only) above.
-Switch to **Tailscale mode** to skip this step entirely.
+**Tailscale certificate fails**
+→ Confirm both **MagicDNS** and **HTTPS** are enabled at [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns).
+→ Vision Pro must also have Tailscale installed and signed in to the same account.
 
-### Tailscale certificate issuance fails
+**Camera permission keeps being denied**
+→ On Vision Pro: **Settings → Privacy & Security → Camera** → enable Safari.
 
-Make sure **MagicDNS** and **HTTPS** are both enabled at [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns).
-Tailscale must also be installed and signed in on your Vision Pro to access the Tailscale hostname.
+**OBS Virtual Camera not showing up**
+→ Open OBS Studio → **Tools → Start Virtual Camera**, then check tray → OBS Status.
 
-### Camera permission is repeatedly denied
+**No microphone in Zoom**
+→ Restart Windows after installing VB-Audio Virtual Cable.
+→ In Zoom audio settings, select `CABLE Output (VB-Audio Virtual Cable)`.
 
-Check **Settings → Privacy & Security → Camera** on Vision Pro and ensure Safari has permission.
+**IP address changed, can't connect (Self-Signed mode)**
+→ Open tray → Show QR Code for the current address. Switch to Tailscale to avoid this entirely.
 
-### OBS Virtual Camera not in the camera list
+---
 
-Open OBS Studio → **Tools → Start Virtual Camera**. The virtual camera stays active after OBS is closed.
+## Building from Source
 
-### Microphone not appearing in Zoom
+Requires Python 3.11+.
 
-Install VB-Audio Virtual Cable, then restart Windows.
-In Zoom microphone settings, select `CABLE Output (VB-Audio Virtual Cable)`.
+```
+server/build.bat
+```
 
-### IP address changed, can't connect (Self-Signed mode)
+`build.bat` is self-contained: it creates a virtual environment, installs all dependencies, runs PyInstaller, and outputs `dist/LNDIVC.zip` — ready to distribute.
 
-The current IP is printed in the terminal each time `start.bat` is run.
-Switch to **Tailscale mode** to get a stable hostname that doesn't change with IP reassignments.
+### Repository layout
+
+```
+LNDIVC/
+├── README.md
+└── server/
+    ├── tray_app.py        # Main entry point — tray icon + all GUI windows
+    ├── server.py          # HTTPS + WebSocket + WebRTC server (aiohttp + aiortc)
+    ├── setup_wizard.py    # Certificate setup logic (Tailscale / self-signed)
+    ├── generate_cert.py   # Self-signed certificate generator
+    ├── install_drivers.py # Driver status helper
+    ├── i18n.py            # Korean / English strings
+    ├── requirements.txt   # Python dependencies
+    ├── build.bat          # PyInstaller build script → dist/LNDIVC.zip
+    ├── LNDIVC.spec        # PyInstaller spec
+    └── static/
+        └── index.html     # Vision Pro Safari interface (WebRTC client)
+```
 
 ---
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|-----------|
-| Streaming protocol | WebRTC (browser ↔ aiortc) |
-| Signaling | WebSocket over WSS (aiohttp) |
-| Video codec | H.264 / VP8 (auto-negotiated) |
+| Layer | Technology |
+|-------|-----------|
+| Streaming protocol | WebRTC — aiortc |
+| Signaling | WebSocket over WSS — aiohttp |
+| Video codec | H.264 / VP8 (negotiated) |
 | Audio codec | Opus 48 kHz mono |
 | Virtual camera | pyvirtualcam → OBS Virtual Camera driver |
-| Virtual audio | sounddevice → VB-Audio Virtual Cable |
-| Certificates | Tailscale (Let's Encrypt) or self-signed (cryptography) |
-| GUI | customtkinter + pystray |
-| Distribution | PyInstaller |
-
----
-
-## License
-
-MIT
+| Virtual microphone | sounddevice → VB-Audio Virtual Cable |
+| Certificate | Tailscale (Let's Encrypt) or self-signed (cryptography) |
+| GUI | pystray (tray) + customtkinter (windows) |
