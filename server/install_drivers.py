@@ -38,13 +38,18 @@ def check_unitycapture() -> bool:
     """UnityCapture DirectShow 필터가 등록되어 있는지 확인"""
     try:
         import winreg
-        for flags in (winreg.KEY_WOW64_64KEY, 0):
+        sub = rf'CLSID\{_UNITY_CLSID}\InprocServer32'
+        # HKCR 조회 (64비트 뷰 우선, 그 다음 기본)
+        for root, flags in (
+            (winreg.HKEY_CLASSES_ROOT, winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_CLASSES_ROOT, 0),
+            # 64비트 DLL은 HKLM\SOFTWARE\Classes 아래 직접 등록될 수 있음
+            (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_LOCAL_MACHINE, 0),
+        ):
+            reg_sub = sub if root == winreg.HKEY_CLASSES_ROOT else rf'SOFTWARE\Classes\{sub}'
             try:
-                key = winreg.OpenKey(
-                    winreg.HKEY_CLASSES_ROOT,
-                    rf'CLSID\{_UNITY_CLSID}\InprocServer32',
-                    access=winreg.KEY_READ | flags,
-                )
+                key = winreg.OpenKey(root, reg_sub, access=winreg.KEY_READ | flags)
                 winreg.CloseKey(key)
                 return True
             except OSError:
@@ -233,6 +238,8 @@ def install_unitycapture(log_cb=None) -> bool:
     }
     if reg_code == 0:
         log("  → regsvr32 성공 (코드 0)")
+        log("  ✓ UnityCapture 설치 완료!")
+        return True
     elif reg_code in _REGSVR32_ERRORS:
         log(f"  → regsvr32 오류 (코드 {reg_code}): {_REGSVR32_ERRORS[reg_code]}")
     elif reg_code > 0:
@@ -240,12 +247,8 @@ def install_unitycapture(log_cb=None) -> bool:
     else:
         log("  → exit code 없음 — UAC를 취소했거나 실행 오류")
 
-    if check_unitycapture():
-        log("  ✓ UnityCapture 설치 완료!")
-        return True
-    else:
-        log("  ✗ 등록 실패 — 위 오류 코드를 확인하세요")
-        return False
+    log("  ✗ 등록 실패 — 위 오류 코드를 확인하세요")
+    return False
 
 
 # ── VB-Audio CABLE 설치 ───────────────────────────────────────────────
