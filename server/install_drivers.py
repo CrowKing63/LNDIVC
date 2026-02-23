@@ -38,12 +38,20 @@ def check_unitycapture() -> bool:
     """UnityCapture DirectShow 필터가 등록되어 있는지 확인"""
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
-                             rf'CLSID\{_UNITY_CLSID}\InprocServer32')
-        winreg.CloseKey(key)
-        return True
-    except Exception:
-        return False
+        for flags in (winreg.KEY_WOW64_64KEY, 0):
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CLASSES_ROOT,
+                    rf'CLSID\{_UNITY_CLSID}\InprocServer32',
+                    access=winreg.KEY_READ | flags,
+                )
+                winreg.CloseKey(key)
+                return True
+            except OSError:
+                continue
+    except ImportError:
+        pass
+    return False
 
 
 def check_vbcable() -> bool:
@@ -195,15 +203,48 @@ def install_unitycapture(log_cb=None) -> bool:
         log(f"  ✗ 복사 실패: {e}")
         return False
 
-    # 5. regsvr32 /s 등록 (UAC 상승 필요)
+    # 5. regsvr32 등록 — 배치 파일로 실제 exit code 캡처
     log("  DirectShow 필터 등록 중 (UAC 창이 열릴 수 있음)...")
-    _run_powershell_runas('regsvr32.exe', ['/s', str(dest)], log)
+    tmp_dir   = Path(tempfile.gettempdir())
+    exit_file = tmp_dir / 'lndivc_regsvr32_exit.txt'
+    bat_file  = tmp_dir / 'lndivc_register.bat'
+    exit_file.unlink(missing_ok=True)
+    bat_file.write_text(
+        f'@echo off\r\n'
+        f'regsvr32 /s "{dest}"\r\n'
+        f'(echo %ERRORLEVEL%)>"{exit_file}"\r\n',
+        encoding='mbcs',
+    )
+    _run_powershell_runas('cmd.exe', ['/c', str(bat_file)], log)
+
+    # exit code 해석
+    reg_code = -1
+    try:
+        reg_code = int(exit_file.read_text(encoding='mbcs').strip())
+    except Exception:
+        pass
+
+    _REGSVR32_ERRORS = {
+        1: "DllRegisterServer 실패 (의존 DLL 누락 또는 손상)",
+        2: "DllRegisterServer 없음 (COM DLL이 아님)",
+        3: "모듈 없음 (DLL 경로 오류)",
+        4: "모듈 유효하지 않음",
+        5: "접근 거부 (관리자 권한 필요)",
+    }
+    if reg_code == 0:
+        log("  → regsvr32 성공 (코드 0)")
+    elif reg_code in _REGSVR32_ERRORS:
+        log(f"  → regsvr32 오류 (코드 {reg_code}): {_REGSVR32_ERRORS[reg_code]}")
+    elif reg_code > 0:
+        log(f"  → regsvr32 실패 코드: {reg_code}")
+    else:
+        log("  → exit code 없음 — UAC를 취소했거나 실행 오류")
 
     if check_unitycapture():
         log("  ✓ UnityCapture 설치 완료!")
         return True
     else:
-        log("  ✗ 등록 실패 (UAC를 거부했거나 오류 발생)")
+        log("  ✗ 등록 실패 — 위 오류 코드를 확인하세요")
         return False
 
 
