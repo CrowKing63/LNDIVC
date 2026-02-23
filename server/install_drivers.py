@@ -74,6 +74,11 @@ def check_unitycapture() -> bool:
     except Exception:
         pass
 
+    # 최종 폴백: regsvr32가 성공했다면 DLL 파일이 UNITY_DIR에 있음
+    # 레지스트리 조회가 Python WOW64로 인해 실패해도 파일 존재로 판단
+    if UNITY_DIR.exists() and any(UNITY_DIR.glob('*.dll')):
+        return True
+
     return False
 
 
