@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LNDIVC – Vision Pro 스트리머</title>
+  <title>LNDIVC – Vision Pro Streamer</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -134,21 +134,21 @@
   <div id="preview-wrap">
     <video id="preview" autoplay muted playsinline></video>
     <div id="placeholder">
-      스트리밍 시작 버튼을 누르면<br>카메라·마이크 권한을 요청합니다
+      Tap Start Streaming to request<br>camera &amp; microphone access
     </div>
   </div>
 
   <div id="status-bar">
     <div id="dot"></div>
-    <span id="status-text">대기 중</span>
+    <span id="status-text">Idle</span>
   </div>
 
-  <button id="start-btn">스트리밍 시작</button>
-  <button id="stop-btn">스트리밍 중지</button>
+  <button id="start-btn">Start Streaming</button>
+  <button id="stop-btn">Stop Streaming</button>
 
   <p class="hint">
-    Windows PC에서 Zoom · PlayAbility 등의 카메라로<br>
-    <strong>OBS Virtual Camera</strong>를 선택하세요
+    On your Windows PC, select<br>
+    <strong>OBS Virtual Camera</strong> in Zoom · Teams · PlayAbility
   </p>
 
 <script>
@@ -172,10 +172,10 @@ function setStatus(msg, state = '') {
 
 async function startStreaming() {
   startBtn.disabled = true;
-  setStatus('카메라·마이크 권한 요청 중…', 'connecting');
+  setStatus('Requesting camera & microphone access…', 'connecting');
 
   try {
-    // 1. 미디어 스트림 획득 (visionOS: 페르소나 카메라 + 마이크)
+    // 1. Acquire media stream (visionOS: persona camera + microphone)
     localStream = await navigator.mediaDevices.getUserMedia({
       video: {
         width:     { ideal: 1280 },
@@ -192,50 +192,50 @@ async function startStreaming() {
       }
     });
 
-    // 미리보기
+    // Preview
     preview.srcObject = localStream;
     preview.style.display = 'block';
     placeholder.style.display = 'none';
 
-    setStatus('서버에 연결 중…', 'connecting');
+    setStatus('Connecting to server…', 'connecting');
 
-    // 2. WebSocket 시그널링 연결 (같은 호스트)
+    // 2. WebSocket signaling (same host)
     ws = new WebSocket(`wss://${location.host}/ws`);
 
-    // 3. RTCPeerConnection (LAN이므로 STUN 불필요)
+    // 3. RTCPeerConnection (no STUN needed on LAN)
     pc = new RTCPeerConnection({ iceServers: [] });
 
-    // 트랙 추가
+    // Add tracks
     localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
-    // ICE 후보 전송
+    // Send ICE candidates
     pc.onicecandidate = ({ candidate }) => {
       if (candidate && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'ice', candidate: candidate.toJSON() }));
       }
     };
 
-    // 연결 상태 모니터링
+    // Monitor connection state
     pc.onconnectionstatechange = () => {
       const s = pc.connectionState;
       if (s === 'connected') {
-        setStatus('✅ 스트리밍 중 — Windows에서 "OBS Virtual Camera" 선택', 'connected');
+        setStatus('✅ Streaming — Select "OBS Virtual Camera" on Windows', 'connected');
         stopBtn.style.display = 'block';
       } else if (s === 'disconnected' || s === 'failed') {
-        setStatus('연결 끊김: ' + s, 'error');
+        setStatus('Disconnected: ' + s, 'error');
         cleanup();
       } else {
-        setStatus('상태: ' + s, 'connecting');
+        setStatus('State: ' + s, 'connecting');
       }
     };
 
-    // WebSocket 이벤트
+    // WebSocket events
     ws.onopen = async () => {
-      // Offer 생성 및 전송
+      // Create and send offer
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       ws.send(JSON.stringify({ type: offer.type, sdp: offer.sdp }));
-      setStatus('협상 중…', 'connecting');
+      setStatus('Negotiating…', 'connecting');
     };
 
     ws.onmessage = async ({ data }) => {
@@ -245,16 +245,16 @@ async function startStreaming() {
       }
     };
 
-    ws.onerror = () => setStatus('WebSocket 오류', 'error');
+    ws.onerror = () => setStatus('WebSocket error', 'error');
     ws.onclose = () => {
       if (pc && pc.connectionState !== 'connected') {
-        setStatus('서버 연결 종료', 'error');
+        setStatus('Server connection closed', 'error');
         cleanup();
       }
     };
 
   } catch (err) {
-    setStatus('오류: ' + err.message, 'error');
+    setStatus('Error: ' + err.message, 'error');
     dot.className = 'error';
     startBtn.disabled = false;
   }
@@ -272,12 +272,12 @@ function cleanup() {
   placeholder.style.display = '';
   startBtn.disabled = false;
   stopBtn.style.display = 'none';
-  setStatus('중지됨');
+  setStatus('Stopped');
 }
 
 startBtn.addEventListener('click', startStreaming);
 stopBtn.addEventListener('click', () => {
-  setStatus('중지 중…');
+  setStatus('Stopping…');
   cleanup();
 });
 </script>

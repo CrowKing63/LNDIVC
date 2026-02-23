@@ -145,6 +145,7 @@ server/build.bat
 
 ```
 LNDIVC/
+├── README.md
 └── server/
     ├── tray_app.py        # Main entry point — tray icon + all GUI windows
     ├── server.py          # HTTPS + WebSocket + WebRTC server (aiohttp + aiortc)
