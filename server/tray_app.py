@@ -688,7 +688,7 @@ def _find_vbcable_uninstaller() -> "str | None":
 def _get_camera_apps() -> "list[tuple[str, int]]":
     """가상 카메라를 점유할 수 있는 실행 중 프로세스 목록 반환"""
     targets = {
-        'zoom.exe', 'teams.exe', 'obs64.exe', 'obs32.exe',
+        'zoom.exe', 'teams.exe', 'obs64.exe', 'obs32.exe', 'obs.exe',
         'chrome.exe', 'firefox.exe', 'msedge.exe', 'slack.exe',
         'discord.exe', 'webex.exe', 'skype.exe', 'msteams.exe',
     }
@@ -736,18 +736,18 @@ def _regsvr32_unregister(path: str) -> bool:
     )
     if ret.returncode == 0:
         return True
-    # 2차: PowerShell RunAs (UAC 프롬프트)
+    # 2차: PowerShell RunAs (UAC 프롬프트) — ExitCode 확인
     try:
         ps_cmd = (
-            f'Start-Process regsvr32.exe '
+            f'$p = Start-Process regsvr32.exe '
             f'-ArgumentList "/u /s `\'{path}`\'" '
-            f'-Verb RunAs -Wait -PassThru'
+            f'-Verb RunAs -Wait -PassThru; exit $p.ExitCode'
         )
-        subprocess.run(
+        ret2 = subprocess.run(
             ['powershell', '-Command', ps_cmd],
             creationflags=0x08000000,
         )
-        return True   # UAC 성공 여부는 별도 확인 불가 → True 반환
+        return ret2.returncode == 0
     except Exception:
         return False
 
@@ -782,6 +782,18 @@ def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
         unity_path = _find_unitycapture()
         if unity_path:
             log_cb("● UnityCapture 드라이버 등록 해제 중...")
+
+            # IFilterMapper2 점유 방지: 카메라 관련 프로세스를 먼저 종료
+            # (OBS 등이 살아있으면 DLL 내부에서 팝업 오류 발생)
+            blocking = _get_camera_apps()
+            if blocking:
+                log_cb("  ↳ DirectShow 점유 프로세스 종료 중...")
+                for bname, bpid in blocking:
+                    log_cb(f"    강제 종료: {bname} (PID {bpid})")
+                    _kill_pid(bpid)
+                import time
+                time.sleep(1.5)   # COM 객체 해제 대기
+
             ok = _regsvr32_unregister(unity_path)
             if ok:
                 log_cb("  ✓ 등록 해제 완료")
