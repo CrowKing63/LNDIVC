@@ -39,23 +39,41 @@ def check_unitycapture() -> bool:
     try:
         import winreg
         sub = rf'CLSID\{_UNITY_CLSID}\InprocServer32'
-        # HKCR 조회 (64비트 뷰 우선, 그 다음 기본)
-        for root, flags in (
-            (winreg.HKEY_CLASSES_ROOT, winreg.KEY_WOW64_64KEY),
-            (winreg.HKEY_CLASSES_ROOT, 0),
-            # 64비트 DLL은 HKLM\SOFTWARE\Classes 아래 직접 등록될 수 있음
-            (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
-            (winreg.HKEY_LOCAL_MACHINE, 0),
-        ):
-            reg_sub = sub if root == winreg.HKEY_CLASSES_ROOT else rf'SOFTWARE\Classes\{sub}'
+        checks = [
+            (winreg.HKEY_CLASSES_ROOT,   sub,                              winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_CLASSES_ROOT,   sub,                              0),
+            (winreg.HKEY_LOCAL_MACHINE,  rf'SOFTWARE\Classes\{sub}',       winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_LOCAL_MACHINE,  rf'SOFTWARE\Classes\{sub}',       0),
+            (winreg.HKEY_CURRENT_USER,   rf'Software\Classes\{sub}',       winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_CURRENT_USER,   rf'Software\Classes\{sub}',       0),
+        ]
+        for hive, reg_sub, flags in checks:
             try:
-                key = winreg.OpenKey(root, reg_sub, access=winreg.KEY_READ | flags)
+                key = winreg.OpenKey(hive, reg_sub, access=winreg.KEY_READ | flags)
                 winreg.CloseKey(key)
                 return True
             except OSError:
                 continue
     except ImportError:
         pass
+
+    # reg query 폴백: Python WOW64 리디렉션 우회
+    try:
+        import subprocess
+        for hive_path in (
+            rf'HKCR\CLSID\{_UNITY_CLSID}\InprocServer32',
+            rf'HKLM\SOFTWARE\Classes\CLSID\{_UNITY_CLSID}\InprocServer32',
+            rf'HKCU\Software\Classes\CLSID\{_UNITY_CLSID}\InprocServer32',
+        ):
+            r = subprocess.run(
+                ['reg', 'query', hive_path],
+                capture_output=True, creationflags=0x08000000,
+            )
+            if r.returncode == 0:
+                return True
+    except Exception:
+        pass
+
     return False
 
 
