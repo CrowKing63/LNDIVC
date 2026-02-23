@@ -7,7 +7,6 @@ LNDIVC 드라이버 자동 설치 모듈
 두 도구 모두 설치 시 UAC(관리자 권한) 프롬프트가 표시됩니다.
 """
 
-import json
 import os
 import shutil
 import subprocess
@@ -22,9 +21,10 @@ DRIVERS_DIR  = _APPDATA / 'LNDIVC' / 'drivers'
 UNITY_DIR    = DRIVERS_DIR / 'UnityCapture'
 
 # ── UnityCapture ──────────────────────────────────────────────────────
-_UNITY_CLSID       = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
-_UNITY_GITHUB_API  = 'https://api.github.com/repos/schellingb/UnityCapture/releases/latest'
-_UNITY_RELEASES    = 'https://github.com/schellingb/UnityCapture/releases'
+_UNITY_CLSID      = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
+# 릴리즈 없음 → master 브랜치 직접 다운로드 (Install/ 폴더에 컴파일된 DLL 포함)
+_UNITY_MASTER_ZIP = 'https://github.com/schellingb/UnityCapture/archive/master.zip'
+_UNITY_SITE       = 'https://github.com/schellingb/UnityCapture'
 
 # ── VB-Audio CABLE ────────────────────────────────────────────────────
 # VB-Audio는 오랫동안 Pack43을 유지해 왔고, 실패 시 공식 사이트로 안내함
@@ -124,48 +124,22 @@ def _run_powershell_runas(exe: str, args: str = '', log_cb=None) -> bool:
 
 def install_unitycapture(log_cb=None) -> bool:
     """
-    GitHub 최신 릴리즈에서 UnityCapture를 다운로드하고 regsvr32로 등록합니다.
+    UnityCapture master 브랜치를 다운로드하고 64비트 DLL을 regsvr32로 등록합니다.
+    Install/ 폴더에 컴파일된 UnityCaptureFilter64.dll이 포함되어 있습니다.
     반환: 설치 성공 여부
     """
     log = log_cb or print
 
-    # 1. GitHub API: 최신 릴리즈 zip URL 탐색
-    log("● UnityCapture 최신 버전 확인 중...")
-    zip_url = None
-    try:
-        req = urllib.request.Request(_UNITY_GITHUB_API,
-                                     headers={'User-Agent': 'LNDIVC/1.0'})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            release = json.loads(resp.read())
-        tag = release.get('tag_name', '?')
-        log(f"  최신 버전: {tag}")
-
-        # binary asset zip 우선, 없으면 zipball(소스)
-        for asset in release.get('assets', []):
-            if asset['name'].endswith('.zip'):
-                zip_url = asset['browser_download_url']
-                break
-        if not zip_url:
-            zip_url = release.get('zipball_url')
-
-    except Exception as e:
-        log(f"  ✗ GitHub API 오류: {e}")
-        log(f"  → 브라우저에서 수동 설치: {_UNITY_RELEASES}")
-        _open_browser(_UNITY_RELEASES)
-        return False
-
-    if not zip_url:
-        log(f"  ✗ 다운로드 링크 없음 → 브라우저로 이동합니다")
-        _open_browser(_UNITY_RELEASES)
-        return False
-
-    # 2. 다운로드
+    # 1. master.zip 다운로드 (컴파일된 DLL 포함)
+    log("● UnityCapture 다운로드 중 (master 브랜치)...")
     tmp = Path(tempfile.mkdtemp())
     zip_path = tmp / 'unitycapture.zip'
-    if not _download(zip_url, zip_path, log):
+    if not _download(_UNITY_MASTER_ZIP, zip_path, log):
+        log(f"  → 브라우저에서 수동 설치: {_UNITY_SITE}")
+        _open_browser(_UNITY_SITE)
         return False
 
-    # 3. 압축 해제
+    # 2. 압축 해제
     log("  압축 해제 중...")
     extract = tmp / 'src'
     try:
@@ -175,33 +149,37 @@ def install_unitycapture(log_cb=None) -> bool:
         log(f"  ✗ 압축 해제 실패: {e}")
         return False
 
-    # 4. 64비트 .ax 파일 탐색 (x64 포함 이름 우선)
-    ax_file = None
-    for p in sorted(extract.rglob('*.ax')):
-        name = p.name.lower()
-        if 'x64' in name or ('unity' in name and '64' in name):
-            ax_file = p
+    # 3. Install/ 폴더에서 64비트 DLL 탐색
+    #    파일명: UnityCaptureFilter64.dll  (Install/ 폴더 안에 위치)
+    dll_file = None
+    # 우선순위: 이름에 '64' 포함된 DLL
+    for p in sorted(extract.rglob('*.dll')):
+        if '64' in p.name:
+            dll_file = p
             break
-    if not ax_file:
-        candidates = list(extract.rglob('*.ax'))
-        ax_file = candidates[0] if candidates else None
+    # 없으면 아무 DLL이라도
+    if not dll_file:
+        candidates = list(extract.rglob('*.dll'))
+        dll_file = candidates[0] if candidates else None
 
-    if not ax_file:
-        log(f"  ✗ .ax 파일을 찾을 수 없음 — 브라우저에서 수동 설치")
-        _open_browser(_UNITY_RELEASES)
+    if not dll_file:
+        log("  ✗ DLL 파일을 찾을 수 없음 — 브라우저에서 수동 설치")
+        _open_browser(_UNITY_SITE)
         return False
 
-    # 5. APPDATA에 영구 복사
-    dest = UNITY_DIR / ax_file.name
+    log(f"  발견: {dll_file.name}")
+
+    # 4. APPDATA에 영구 복사
+    dest = UNITY_DIR / dll_file.name
     log(f"  복사: {dest}")
     try:
         UNITY_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ax_file, dest)
+        shutil.copy2(dll_file, dest)
     except Exception as e:
         log(f"  ✗ 복사 실패: {e}")
         return False
 
-    # 6. regsvr32 /s 등록 (UAC 상승 필요)
+    # 5. regsvr32 /s 등록 (UAC 상승 필요)
     log("  DirectShow 필터 등록 중 (UAC 창이 열릴 수 있음)...")
     _run_powershell_runas('regsvr32.exe', f'/s "{dest}"', log)
 
