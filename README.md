@@ -1,303 +1,318 @@
 # LNDIVC
 
-**Vision Pro 페르소나 → Windows 가상 웹캠 스트리머**
+**Apple Vision Pro Persona → Windows Virtual Webcam Streamer**
 
-Apple Vision Pro의 페르소나(전면 카메라)와 마이크를 로컬 네트워크를 통해 Windows PC의 가상 웹캠·마이크로 노출합니다.
-Zoom, PlayAbility 등 모든 DirectShow 기반 소프트웨어에서 일반 웹캠처럼 선택할 수 있습니다.
+Stream your Apple Vision Pro's front-facing persona camera and microphone to your Windows PC over a local network or Tailscale VPN, and expose them as a virtual webcam and microphone to any DirectShow-compatible app — Zoom, Teams, OBS, PlayAbility, and more.
 
-**별도 visionOS 앱 설치 불필요** — Vision Pro Safari에서 로컬 웹페이지에 접속하는 방식입니다.
+**No visionOS app installation required** — uses Safari on Vision Pro to connect to a local web page.
 
 ---
 
-## 동작 원리
+## How It Works
 
 ```
-Vision Pro Safari
-  └─ getUserMedia() → 페르소나 카메라 + 마이크
-       └─ WebRTC (로컬 네트워크 또는 Tailscale VPN)
-            └─ Windows server.py
-                 ├─ 비디오 → OBS Virtual Camera
-                 │             └─ Zoom / PlayAbility
-                 └─ 오디오 → VB-Audio CABLE Input
-                               └─ CABLE Output (Zoom 마이크)
+Apple Vision Pro (Safari)
+  └─ getUserMedia() → Persona Camera + Microphone
+       └─ WebRTC  (LAN or Tailscale VPN)
+            └─ Windows  server.py
+                 ├─ Video → OBS Virtual Camera
+                 │             └─ Zoom / Teams / PlayAbility
+                 └─ Audio → VB-Audio CABLE Input
+                               └─ CABLE Output  (mic in Zoom / Teams)
 ```
 
 ---
 
-## 사전 준비 (Windows)
+## Prerequisites (Windows)
 
-| 필수 항목 | 다운로드 |
-|-----------|----------|
-| Python 3.11 이상 | https://www.python.org |
-| OBS Studio (가상 카메라 드라이버 포함) | https://obsproject.com |
-| VB-Audio Virtual Cable *(마이크 연동 선택)* | https://vb-audio.com/Cable |
+| Required | Download |
+|----------|----------|
+| Python 3.11 or later | https://www.python.org |
+| OBS Studio (includes the virtual camera driver) | https://obsproject.com |
+| VB-Audio Virtual Cable *(optional — needed for mic passthrough)* | https://vb-audio.com/Cable |
 
-> **OBS Studio 주의**: 설치 후 OBS를 한 번 실행한 뒤 메뉴 **도구 → 가상 카메라 시작**을 눌러 드라이버를 활성화해야 합니다. 이후에는 OBS 없이도 가상 카메라가 작동합니다.
-
----
-
-## 설치 (최초 1회)
-
-### 1. 저장소 다운로드
-
-ZIP으로 다운로드 후 압축 해제합니다.
-
-### 2. setup.bat 실행
-
-`server` 폴더에서 `setup.bat`을 더블클릭합니다.
-
-- Python 가상환경 생성 및 패키지 자동 설치
-- 인증서 설정 마법사 실행 → **Tailscale** 또는 **자체 서명** 선택
+> **OBS note:** After installing OBS, launch it once and click **Tools → Start Virtual Camera** to activate the driver. The virtual camera stays active even after OBS is closed.
 
 ---
 
-## 인증서 방식 선택
+## Installation (one-time setup)
 
-### 방식 A — Tailscale (권장)
+### 1. Download the repository
 
-Vision Pro에서 **인증서 신뢰 설정 불필요**. IP가 바뀌어도 주소 고정.
+Download as a ZIP and extract it anywhere on your Windows PC.
 
-**준비:**
-1. Windows PC와 Vision Pro 모두 [Tailscale](https://tailscale.com/download) 설치 및 같은 계정 로그인
-2. [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns) 접속 → **Enable MagicDNS** + **Enable HTTPS** 활성화
-3. `setup.bat` 실행 → `[1] Tailscale` 선택
+### 2. Run setup.bat
 
-**결과:** `setup.bat`이 `tailscale cert` 명령으로 인증서를 자동 발급합니다.
+Double-click `setup.bat` inside the `server` folder.
 
----
-
-### 방식 B — 자체 서명 (기존 방식)
-
-Tailscale 없이 로컬 네트워크만 사용하는 경우.
-
-`setup.bat` 실행 → `[2] 자체 서명` 선택 후 아래 단계 진행:
-
-1. `server/cert.pem` 파일을 **AirDrop** 또는 **이메일**로 Vision Pro에 전송
-2. Vision Pro에서 파일을 열면 프로파일 설치 화면 열림 → **설치**
-3. **설정 → 일반 → 정보 → 인증서 신뢰 설정**
-   → `LNDIVC Local` 스위치 켜기 → **계속**
+- Creates a Python virtual environment and installs all dependencies automatically
+- Launches the certificate setup wizard — choose **Tailscale** or **Self-Signed**
 
 ---
 
-## 매일 사용 방법
+## Certificate Mode
+
+HTTPS is required for browser camera access. Choose the mode that fits your setup.
+
+### Mode A — Tailscale (Recommended)
+
+No certificate trust step needed on Vision Pro. Works even when your IP changes.
+
+**Steps:**
+1. Install [Tailscale](https://tailscale.com/download) on both your Windows PC and Vision Pro, and sign in to the same account
+2. Go to [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns) → enable **MagicDNS** and **HTTPS**
+3. Run `setup.bat` → select `[1] Tailscale`
+
+`setup.bat` will automatically issue the certificate using the `tailscale cert` CLI command.
+
+---
+
+### Mode B — Self-Signed (Local network only)
+
+Use this if you don't have Tailscale.
+
+Run `setup.bat` → select `[2] Self-Signed`, then complete the trust step below:
+
+1. Send `server/cert.pem` to your Vision Pro via **AirDrop** or **email**
+2. Open the file on Vision Pro — a profile installation screen will appear → tap **Install**
+3. Go to **Settings → General → About → Certificate Trust Settings**
+   → enable the toggle for `LNDIVC Local` → tap **Continue**
+
+---
+
+## Daily Usage
 
 ### Windows
 
-1. `server/start.bat` 더블클릭
-2. 터미널에 표시되는 주소 확인
+1. Double-click `server/start.bat`
+2. Note the URL shown in the terminal
 
 ```
 =======================================================
-  LNDIVC 서버 실행 중
-  Vision Pro Safari에서 아래 주소로 접속하세요:
+  LNDIVC Server Running
+  Open the URL below in Vision Pro Safari:
 
-    https://my-pc.tail12345.ts.net:8443        ← Tailscale
-    https://192.168.x.x:8443                   ← 자체 서명
+    https://my-pc.tail12345.ts.net:8443   ← Tailscale
+    https://192.168.x.x:8443              ← Self-Signed
 =======================================================
 ```
+
+Or launch `LNDIVC.exe` (system tray GUI) if you are using the pre-built executable.
 
 ### Vision Pro
 
-1. Safari에서 위 주소로 이동
-2. **스트리밍 시작** 버튼 탭
-3. 카메라·마이크 권한 허용
-4. 화면에 "스트리밍 중" 메시지 확인
+1. Open Safari and navigate to the URL above
+2. Tap **Start Streaming**
+3. Allow camera and microphone permissions
+4. Wait for the status to show **Streaming**
 
-### Zoom / PlayAbility 설정
+### Zoom / Teams / PlayAbility settings
 
-| 설정 | 값 |
-|------|----|
-| 카메라 | `OBS Virtual Camera` |
-| 마이크 | `CABLE Output (VB-Audio Virtual Cable)` |
+| Setting | Value |
+|---------|-------|
+| Camera | `OBS Virtual Camera` |
+| Microphone | `CABLE Output (VB-Audio Virtual Cable)` |
 
 ---
 
-## 테스트 및 검증
+## Testing & Verification
 
-실제 Vision Pro 없이도 각 단계를 개별적으로 확인할 수 있습니다.
+You can validate each stage of the pipeline individually, without needing Vision Pro connected.
 
-### 1단계 — 서버 시작 확인
+### Step 1 — Verify server startup
 
-`start.bat`(또는 `python server.py`) 실행 후 아래 출력이 나오면 정상입니다.
+After running `start.bat` (or `python server.py`), confirm the output looks like this:
 
 ```
 =======================================================
-  LNDIVC 서버 실행 중
-  Vision Pro Safari에서 아래 주소로 접속하세요:
+  LNDIVC Server Running
+  Open the URL below in Vision Pro Safari:
 
     https://my-pc.tail12345.ts.net:8443   ← Tailscale
-    https://192.168.x.x:8443              ← 자체 서명
+    https://192.168.x.x:8443              ← Self-Signed
 
-  가상 카메라: OBS Virtual Camera          ← "비활성" 이면 OBS 설치 확인
-  오디오 출력: VB-Audio CABLE Input        ← "기본 스피커" 이면 VB-Cable 설치 확인
+  Virtual Camera: OBS Virtual Camera       ← "Inactive" means OBS is not set up
+  Audio Output:   VB-Audio CABLE Input     ← "Default Speaker" means VB-Cable not found
 =======================================================
 ```
 
-**체크포인트**
-
-| 항목 | 정상 출력 | 비정상 원인 |
-|------|-----------|------------|
-| cert.pem / key.pem | (오류 없이 서버 시작) | `setup.bat` 미실행 |
-| 가상 카메라 | `OBS Virtual Camera` | OBS 미설치 또는 가상 카메라 미활성 |
-| 오디오 출력 | `VB-Audio CABLE Input` | VB-Audio Cable 미설치 |
+| Item | Expected | Problem if wrong |
+|------|----------|-----------------|
+| cert.pem / key.pem | Server starts without errors | Run `setup.bat` first |
+| Virtual Camera | `OBS Virtual Camera` | OBS not installed or virtual cam not started |
+| Audio Output | `VB-Audio CABLE Input` | VB-Audio Cable not installed |
 
 ---
 
-### 2단계 — HTTPS 접속 확인 (PC 브라우저)
+### Step 2 — Verify HTTPS from your PC browser
 
-Windows Chrome/Edge에서 서버 주소를 직접 열어 연결을 먼저 검증합니다.
+Open the server URL in Windows Chrome or Edge to confirm connectivity before using Vision Pro.
 
-1. `https://192.168.x.x:8443` (또는 Tailscale 주소) 접속
-2. **Tailscale 방식**: 잠금 아이콘 표시 → 정상
-3. **자체 서명 방식**: "연결이 안전하지 않음" 경고 → **고급 → 계속** 클릭 → 페이지 로딩 확인
+1. Navigate to `https://192.168.x.x:8443` (or your Tailscale address)
+2. **Tailscale mode:** padlock icon appears → connection is valid
+3. **Self-signed mode:** "Not secure" warning → click **Advanced → Continue** → page loads
 
-> PC에서 페이지가 열리면 서버·인증서·네트워크는 정상입니다.
-
----
-
-### 3단계 — WebSocket 시그널링 확인 (브라우저 개발자 도구)
-
-PC 브라우저에서 F12 → **네트워크** 탭 → 필터: `WS`
-
-1. 페이지에서 **스트리밍 시작** 클릭
-2. `wss://…/ws` 항목이 **101 Switching Protocols** 상태로 표시되면 정상
-3. `offer` / `answer` 메시지가 오가는지 **메시지** 탭에서 확인
+> If the page opens from your PC, the server, certificates, and network are all working correctly.
 
 ---
 
-### 4단계 — Vision Pro 연결 테스트
+### Step 3 — Verify WebSocket signaling (browser DevTools)
 
-1. Vision Pro Safari에서 서버 주소 접속
-2. **스트리밍 시작** 탭 → 카메라·마이크 권한 **허용**
-3. 상태 표시가 `✅ 스트리밍 중` 으로 바뀌면 WebRTC 연결 성공
-4. Windows 터미널에 아래 로그 확인:
+Open the page in your PC browser, press F12 → **Network** tab → filter by `WS`.
+
+1. Click **Start Streaming** on the page
+2. Confirm `wss://…/ws` shows a **101 Switching Protocols** status
+3. In the **Messages** tab, verify `offer` and `answer` messages are exchanged
+
+---
+
+### Step 4 — Test Vision Pro connection
+
+1. Navigate to the server URL in Vision Pro Safari
+2. Tap **Start Streaming** → grant camera and microphone permissions
+3. Status should change to **✅ Streaming** when WebRTC connects successfully
+4. Confirm the following lines appear in the Windows terminal:
 
 ```
-WebRTC 상태: connected
-비디오 트랙 수신 시작
-오디오 트랙 수신 시작
+WebRTC state: connected
+Video track received
+Audio track received
 ```
 
 ---
 
-### 5단계 — 가상 카메라 출력 확인
+### Step 5 — Verify virtual camera output
 
-1. Windows **카메라 앱** 실행 → 상단 카메라 전환 버튼 클릭
-2. 목록에서 `OBS Virtual Camera` 선택
-3. Vision Pro 페르소나 영상이 표시되면 비디오 파이프라인 정상
+1. Open the **Camera** app on Windows → click the switch camera button at the top
+2. Select `OBS Virtual Camera`
+3. If the Vision Pro persona video appears, the video pipeline is working
 
-> 카메라 앱 대신 OBS Studio 내 **미리보기** 에서도 확인 가능합니다.
-
----
-
-### 6단계 — 가상 오디오 출력 확인
-
-1. Windows **설정 → 시스템 → 사운드 → 볼륨 믹서** 실행
-2. `CABLE Output (VB-Audio Virtual Cable)` 장치 선택 후 Vision Pro에서 말하기
-3. 레벨 미터가 움직이면 오디오 파이프라인 정상
+> You can also verify in OBS Studio's preview window instead of the Camera app.
 
 ---
 
-### 7단계 — Zoom 통합 테스트
+### Step 6 — Verify virtual audio output
 
-| 설정 위치 | 값 |
-|----------|----|
-| Zoom 설정 → 비디오 → 카메라 | `OBS Virtual Camera` |
-| Zoom 설정 → 오디오 → 마이크 | `CABLE Output (VB-Audio Virtual Cable)` |
-
-1. Zoom 테스트 미팅 시작 → **비디오 미리보기**에서 페르소나 영상 확인
-2. **마이크 테스트**에서 Vision Pro 음성 녹음·재생 확인
+1. Open Windows **Settings → System → Sound → Volume Mixer**
+2. Select the `CABLE Output (VB-Audio Virtual Cable)` device and speak from Vision Pro
+3. If the level meter moves, the audio pipeline is working
 
 ---
 
-### 단계별 문제 판단표
+### Step 7 — Zoom integration test
 
-| 증상 | 의심 단계 | 확인 방법 |
-|------|-----------|----------|
-| 서버 실행 즉시 종료 | 1단계 | cert.pem/key.pem 존재 여부 |
-| 브라우저에서 페이지 안 열림 | 2단계 | 방화벽 8443 포트 허용 여부 |
-| 상태가 "협상 중"에서 멈춤 | 3단계 | 개발자 도구 WS 탭 확인 |
-| 연결은 됐지만 카메라 앱에 영상 없음 | 5단계 | OBS 가상 카메라 활성화 여부 |
-| Zoom 마이크에 소리 없음 | 6단계 | VB-Audio Cable 설치·재시작 여부 |
+| Location | Value |
+|----------|-------|
+| Zoom Settings → Video → Camera | `OBS Virtual Camera` |
+| Zoom Settings → Audio → Microphone | `CABLE Output (VB-Audio Virtual Cable)` |
+
+1. Start a Zoom test meeting → confirm persona video appears in the video preview
+2. Test the microphone → record and play back to confirm Vision Pro audio is captured
 
 ---
 
-## 배포용 .exe 빌드 (선택)
+### Troubleshooting Decision Table
 
-Python이 없는 PC에 배포할 수 있는 단독 실행 파일을 생성합니다.
+| Symptom | Suspect step | How to check |
+|---------|--------------|-------------|
+| Server exits immediately | Step 1 | Check that cert.pem / key.pem exist |
+| Page won't open in browser | Step 2 | Allow port 8443 in Windows Firewall |
+| Status stuck at "Negotiating" | Step 3 | Check WS tab in browser DevTools |
+| Connected but no image in Camera app | Step 5 | Enable OBS Virtual Camera |
+| No audio in Zoom microphone | Step 6 | Install VB-Audio Cable and restart Windows |
+
+---
+
+## Build a Standalone .exe (Optional)
+
+Generate a self-contained executable that runs on PCs without Python installed.
 
 ```
-server/build.bat 더블클릭
-  → dist/LNDIVC/ 폴더 생성
+Double-click server/build.bat
+  → creates dist/LNDIVC/ folder
 ```
 
-**배포 방법:**
-1. `dist/LNDIVC/` 폴더 전체를 대상 PC에 복사
-2. `LNDIVC.exe --setup` 실행 → 인증서 설정
-3. `LNDIVC.exe` 실행 → 서버 시작
+**Distribution:**
+1. Copy the entire `dist/LNDIVC/` folder to the target PC
+2. Run `LNDIVC.exe --setup` → complete certificate configuration
+3. Run `LNDIVC.exe` → server starts via the system tray GUI
 
-> OBS Studio와 VB-Audio Virtual Cable은 대상 PC에 별도 설치 필요합니다.
+> OBS Studio and VB-Audio Virtual Cable must be installed separately on the target PC.
 
 ---
 
-## 파일 구조
+## File Structure
 
 ```
 LNDIVC/
+├── README.md
 └── server/
-    ├── server.py           # 메인 서버 (HTTPS + WebSocket + WebRTC)
-    ├── setup_wizard.py     # 인증서 설정 마법사 (Tailscale / 자체 서명)
-    ├── generate_cert.py    # 자체 서명 인증서 생성
-    ├── requirements.txt    # Python 의존성
-    ├── setup.bat           # 최초 설치 스크립트
-    ├── start.bat           # 서버 실행 스크립트
-    ├── build.bat           # PyInstaller .exe 빌드 스크립트
-    ├── LNDIVC.spec         # PyInstaller 스펙
+    ├── server.py           # Core server — HTTPS + WebSocket + WebRTC (aiortc)
+    ├── tray_app.py         # System tray GUI (customtkinter + pystray)
+    ├── setup_wizard.py     # Certificate setup wizard (Tailscale / Self-Signed)
+    ├── generate_cert.py    # Self-signed certificate generator
+    ├── i18n.py             # Localization — Korean / English
+    ├── install_drivers.py  # OBS / VB-Audio driver detection
+    ├── requirements.txt    # Python dependencies
+    ├── setup.bat           # First-time setup script
+    ├── start.bat           # Server launch script
+    ├── build.bat           # PyInstaller .exe build script
+    ├── LNDIVC.spec         # PyInstaller configuration
     └── static/
-        └── index.html      # Vision Pro Safari 접속 페이지
+        └── index.html      # Vision Pro Safari client page
 ```
 
 ---
 
-## 트러블슈팅
+## Troubleshooting
 
-### Safari에서 "이 연결은 안전하지 않습니다" 경고 (자체 서명 방식)
+### "This connection is not secure" in Safari (Self-Signed mode)
 
-→ cert.pem 신뢰 설정이 완료되지 않은 경우입니다.
-→ 경고 페이지에서 **고급 → 이 웹사이트 방문**을 눌러도 `getUserMedia`가 차단됩니다. 반드시 신뢰 설정을 완료하세요.
-→ 번거롭다면 **Tailscale 방식**으로 전환하면 이 단계가 불필요합니다.
+The certificate trust step was not completed.
+Clicking **Advanced → Visit this website** on the warning page will still block `getUserMedia`. Complete the profile trust step described in [Mode B](#mode-b--self-signed-local-network-only) above.
+Switch to **Tailscale mode** to skip this step entirely.
 
-### Tailscale 인증서 발급 실패
+### Tailscale certificate issuance fails
 
-→ [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns)에서 **MagicDNS**와 **HTTPS**가 모두 활성화되어 있는지 확인하세요.
-→ Vision Pro에도 Tailscale 앱이 설치·로그인되어 있어야 접속 가능합니다.
+Make sure **MagicDNS** and **HTTPS** are both enabled at [admin.tailscale.com/dns](https://login.tailscale.com/admin/dns).
+Tailscale must also be installed and signed in on your Vision Pro to access the Tailscale hostname.
 
-### 카메라 권한이 계속 거부됨
+### Camera permission is repeatedly denied
 
-→ Vision Pro **설정 → 개인 정보 보호 및 보안 → 카메라**에서 Safari 권한을 허용했는지 확인하세요.
+Check **Settings → Privacy & Security → Camera** on Vision Pro and ensure Safari has permission.
 
-### OBS Virtual Camera가 목록에 없음
+### OBS Virtual Camera not in the camera list
 
-→ OBS Studio를 실행한 뒤 **도구 → 가상 카메라 시작**을 눌러주세요.
+Open OBS Studio → **Tools → Start Virtual Camera**. The virtual camera stays active after OBS is closed.
 
-### 마이크가 Zoom에 표시되지 않음
+### Microphone not appearing in Zoom
 
-→ VB-Audio Virtual Cable 설치 후 Windows를 재시작하세요.
-→ Zoom 마이크 설정에서 `CABLE Output (VB-Audio Virtual Cable)` 선택.
+Install VB-Audio Virtual Cable, then restart Windows.
+In Zoom microphone settings, select `CABLE Output (VB-Audio Virtual Cable)`.
 
-### IP 주소가 바뀌어 접속이 안 됨 (자체 서명 방식)
+### IP address changed, can't connect (Self-Signed mode)
 
-→ `start.bat` 실행 시 터미널에 현재 IP가 출력됩니다.
-→ IP가 자주 바뀐다면 Tailscale 방식으로 전환하면 IP 변경 문제가 사라집니다.
+The current IP is printed in the terminal each time `start.bat` is run.
+Switch to **Tailscale mode** to get a stable hostname that doesn't change with IP reassignments.
 
 ---
 
-## 기술 스택
+## Tech Stack
 
-- **스트리밍 프로토콜**: WebRTC (브라우저 ↔ aiortc)
-- **시그널링**: WebSocket over WSS (aiohttp)
-- **비디오**: H.264 / VP8 (협상 자동)
-- **오디오**: Opus 48kHz mono
-- **가상 카메라**: pyvirtualcam → OBS Virtual Camera 드라이버
-- **가상 오디오**: sounddevice → VB-Audio Virtual Cable
-- **인증서**: Tailscale (Let's Encrypt) 또는 자체 서명 (cryptography)
+| Component | Technology |
+|-----------|-----------|
+| Streaming protocol | WebRTC (browser ↔ aiortc) |
+| Signaling | WebSocket over WSS (aiohttp) |
+| Video codec | H.264 / VP8 (auto-negotiated) |
+| Audio codec | Opus 48 kHz mono |
+| Virtual camera | pyvirtualcam → OBS Virtual Camera driver |
+| Virtual audio | sounddevice → VB-Audio Virtual Cable |
+| Certificates | Tailscale (Let's Encrypt) or self-signed (cryptography) |
+| GUI | customtkinter + pystray |
+| Distribution | PyInstaller |
+
+---
+
+## License
+
+MIT
