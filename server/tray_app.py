@@ -8,6 +8,7 @@ LNDIVC Tray Application
 
 import asyncio
 import json
+import queue as _queue
 import socket
 import sys
 import threading
@@ -82,6 +83,23 @@ _server_thread: "threading.Thread | None" = None
 _loop: "asyncio.AbstractEventLoop | None" = None
 _stop_event: "asyncio.Event | None" = None
 _conn_status = "stopped"   # stopped | running | connected | error
+
+# ── GUI 전용 스레드 (tkinter 스레드 안전성) ───────────────────────────
+# 모든 CTk/tkinter 창은 이 단일 스레드에서 순차 실행되어
+# Tcl 인터프리터 스레드 불일치(RuntimeError: main thread is not in main loop)를 방지한다.
+_gui_queue: "_queue.Queue" = _queue.Queue()
+_gui_thread: "threading.Thread | None" = None
+
+
+def _gui_worker() -> None:
+    while True:
+        fn = _gui_queue.get()
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception as exc:
+            print(f"[GUI 오류] {exc}")
 
 
 # ── 설정 로드/저장 ────────────────────────────────────────────────────
@@ -255,8 +273,12 @@ def _on_quit(icon, item=None) -> None:
 
 # ── 창 유틸리티 ───────────────────────────────────────────────────────
 def _open_window(fn) -> None:
-    """별도 스레드에서 tkinter 창 열기 (pystray 콜백에서 호출용)"""
-    threading.Thread(target=fn, daemon=True).start()
+    """GUI 전용 스레드에서 창 열기 (tkinter 스레드 안전)"""
+    global _gui_thread
+    if _gui_thread is None or not _gui_thread.is_alive():
+        _gui_thread = threading.Thread(target=_gui_worker, daemon=True)
+        _gui_thread.start()
+    _gui_queue.put(fn)
 
 
 def _apply_ctk_theme() -> None:
@@ -503,41 +525,45 @@ def _drivers_window_fn() -> None:
     _busy = [False]
 
     def _log(msg: str) -> None:
-        log_box.configure(state='normal')
-        log_box.insert('end', msg + '\n')
-        log_box.see('end')
-        log_box.configure(state='disabled')
-        root.update()
+        # root.after()는 다른 스레드에서 호출해도 안전한 tkinter 유일한 메서드
+        def _update():
+            log_box.configure(state='normal')
+            log_box.insert('end', msg + '\n')
+            log_box.see('end')
+            log_box.configure(state='disabled')
+        root.after(0, _update)
 
     def _refresh_status() -> None:
-        unity_ok[0] = check_unitycapture()
-        vbc_ok[0]   = check_vbcable()
-        uc_status.configure(
-            text=t('installed') if unity_ok[0] else t('not_installed'),
-            text_color=_status_color(unity_ok[0]))
-        uc_btn.configure(state='disabled' if unity_ok[0] else 'normal')
-        vbc_status.configure(
-            text=t('installed') if vbc_ok[0] else t('not_installed'),
-            text_color=_status_color(vbc_ok[0]))
-        vbc_btn.configure(state='disabled' if vbc_ok[0] else 'normal')
-        all_done = unity_ok[0] and vbc_ok[0]
-        summary_var.set(t('drv_all_ok') if all_done else t('drv_missing'))
-        summary_lbl.configure(text_color='#34c759' if all_done else '#ffa500')
+        def _do():
+            unity_ok[0] = check_unitycapture()
+            vbc_ok[0]   = check_vbcable()
+            uc_status.configure(
+                text=t('installed') if unity_ok[0] else t('not_installed'),
+                text_color=_status_color(unity_ok[0]))
+            uc_btn.configure(state='disabled' if unity_ok[0] else 'normal')
+            vbc_status.configure(
+                text=t('installed') if vbc_ok[0] else t('not_installed'),
+                text_color=_status_color(vbc_ok[0]))
+            vbc_btn.configure(state='disabled' if vbc_ok[0] else 'normal')
+            all_done = unity_ok[0] and vbc_ok[0]
+            summary_var.set(t('drv_all_ok') if all_done else t('drv_missing'))
+            summary_lbl.configure(text_color='#34c759' if all_done else '#ffa500')
+        root.after(0, _do)
 
     def _run_install(fn, label: str) -> None:
         if _busy[0]:
             return
         _busy[0] = True
-        uc_btn.configure(state='disabled')
-        vbc_btn.configure(state='disabled')
-        btn_all.configure(state='disabled')
+        root.after(0, lambda: uc_btn.configure(state='disabled'))
+        root.after(0, lambda: vbc_btn.configure(state='disabled'))
+        root.after(0, lambda: btn_all.configure(state='disabled'))
         _log(f"\n── {label} ──")
         try:
             fn(_log)
         finally:
             _refresh_status()
             _busy[0] = False
-            btn_all.configure(state='normal')
+            root.after(0, lambda: btn_all.configure(state='normal'))
 
     # 버튼 커맨드 연결
     uc_btn.configure(
@@ -559,9 +585,9 @@ def _drivers_window_fn() -> None:
         if _busy[0]:
             return
         _busy[0] = True
-        uc_btn.configure(state='disabled')
-        vbc_btn.configure(state='disabled')
-        btn_all.configure(state='disabled')
+        root.after(0, lambda: uc_btn.configure(state='disabled'))
+        root.after(0, lambda: vbc_btn.configure(state='disabled'))
+        root.after(0, lambda: btn_all.configure(state='disabled'))
         _log(f"\n── {t('install_all_btn')} ──")
         try:
             if not unity_ok[0]:
@@ -571,7 +597,7 @@ def _drivers_window_fn() -> None:
         finally:
             _refresh_status()
             _busy[0] = False
-            btn_all.configure(state='normal')
+            root.after(0, lambda: btn_all.configure(state='normal'))
 
     # ── 하단 버튼 ────────────────────────────────────────────────────
     btn_row = ctk.CTkFrame(root, fg_color='transparent')
@@ -599,16 +625,35 @@ _UNITY_CLSID = '{5C2CD55C-92AD-4999-8666-912BD3E700BB}'
 
 
 def _find_unitycapture() -> "str | None":
-    """레지스트리에서 UnityCapture .ax 파일 경로 반환"""
+    """레지스트리 또는 설치 경로에서 UnityCapture DLL 경로 반환"""
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
-                             rf'CLSID\{_UNITY_CLSID}\InprocServer32')
-        val, _ = winreg.QueryValueEx(key, '')
-        winreg.CloseKey(key)
-        return val if Path(val).exists() else None
-    except Exception:
-        return None
+        sub = rf'CLSID\{_UNITY_CLSID}\InprocServer32'
+        checks = [
+            (winreg.HKEY_CLASSES_ROOT,  sub,                        winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_CLASSES_ROOT,  sub,                        0),
+            (winreg.HKEY_LOCAL_MACHINE, rf'SOFTWARE\Classes\{sub}', winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_LOCAL_MACHINE, rf'SOFTWARE\Classes\{sub}', 0),
+            (winreg.HKEY_CURRENT_USER,  rf'Software\Classes\{sub}', winreg.KEY_WOW64_64KEY),
+            (winreg.HKEY_CURRENT_USER,  rf'Software\Classes\{sub}', 0),
+        ]
+        for hive, reg_sub, flags in checks:
+            try:
+                key = winreg.OpenKey(hive, reg_sub, access=winreg.KEY_READ | flags)
+                val, _ = winreg.QueryValueEx(key, '')
+                winreg.CloseKey(key)
+                if val and Path(val).exists():
+                    return val
+            except Exception:
+                continue
+    except ImportError:
+        pass
+    # 폴백: APPDATA에 복사한 DLL 직접 탐색
+    from install_drivers import UNITY_DIR
+    if UNITY_DIR.exists():
+        for f in sorted(UNITY_DIR.glob('*.dll')):
+            return str(f)
+    return None
 
 
 def _find_vbcable_uninstaller() -> "str | None":
@@ -855,11 +900,12 @@ def _uninstall_window_fn() -> None:
     log_box.pack(fill='x', padx=24, pady=(4, 10))
 
     def _log(msg: str) -> None:
-        log_box.configure(state='normal')
-        log_box.insert('end', msg + '\n')
-        log_box.see('end')
-        log_box.configure(state='disabled')
-        root.update()
+        def _update():
+            log_box.configure(state='normal')
+            log_box.insert('end', msg + '\n')
+            log_box.see('end')
+            log_box.configure(state='disabled')
+        root.after(0, _update)
 
     done = [False]
 
