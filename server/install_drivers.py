@@ -107,14 +107,30 @@ def _open_browser(url: str) -> None:
         pass
 
 
-def _run_powershell_runas(exe: str, args: str = '', log_cb=None) -> bool:
+def _run_powershell_runas(exe: str, args=None, log_cb=None) -> bool:
     """PowerShell Start-Process -Verb RunAs 로 관리자 권한 실행 (완료 대기)"""
-    arg_part = f' -ArgumentList "{args}"' if args else ''
-    ps = f'Start-Process `"{exe}`"{arg_part} -Verb RunAs -Wait'
+    if args:
+        if isinstance(args, (list, tuple)):
+            # Build a proper PS array: @("arg1", "arg2") — each element double-quoted
+            ps_args = ', '.join(f'"{a}"' for a in args)
+            arg_part = f' -ArgumentList @({ps_args})'
+        else:
+            # Legacy plain string (no inner quotes expected)
+            arg_part = f' -ArgumentList "{args}"'
+    else:
+        arg_part = ''
+    ps = f'Start-Process "{exe}"{arg_part} -Verb RunAs -Wait'
     try:
-        subprocess.run(['powershell', '-Command', ps],
-                       creationflags=0x08000000)
-        return True
+        result = subprocess.run(
+            ['powershell', '-NonInteractive', '-Command', ps],
+            creationflags=0x08000000,
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0 and log_cb:
+            err = (result.stderr or result.stdout or '').strip()
+            if err:
+                log_cb(f"  ✗ PowerShell 오류: {err[:200]}")
+        return result.returncode == 0
     except Exception as e:
         log_cb and log_cb(f"  ✗ 실행 실패: {e}")
         return False
@@ -181,7 +197,7 @@ def install_unitycapture(log_cb=None) -> bool:
 
     # 5. regsvr32 /s 등록 (UAC 상승 필요)
     log("  DirectShow 필터 등록 중 (UAC 창이 열릴 수 있음)...")
-    _run_powershell_runas('regsvr32.exe', f'/s "{dest}"', log)
+    _run_powershell_runas('regsvr32.exe', ['/s', str(dest)], log)
 
     if check_unitycapture():
         log("  ✓ UnityCapture 설치 완료!")
