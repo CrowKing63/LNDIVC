@@ -837,8 +837,8 @@ def _uninstall_window_fn() -> None:
 
     root = ctk.CTk() if HAVE_CTK else ctk.Tk()   # type: ignore
     root.title(t('uninstall_title'))
-    root.resizable(False, False)
-    root.geometry("500x600")
+    root.resizable(False, True)   # 세로만 허용 — 콘텐츠 양에 따라 자동 높이
+    root.minsize(500, 420)
 
     if not HAVE_CTK:
         ctk.Label(root, text=t('uninstall_title')).pack(pady=20)   # type: ignore
@@ -878,17 +878,19 @@ def _uninstall_window_fn() -> None:
         ctk.CTkLabel(root, text=f"⚠  {t('close_apps_warning')}",
                      text_color='#ffa500', anchor='w').pack(fill='x', padx=24)
 
-        app_frame = ctk.CTkScrollableFrame(root, height=90)
+        # CTkScrollableFrame은 pack에서 남은 공간을 전부 점유하므로
+        # 일반 CTkFrame 사용 (목록이 많아야 3~4개)
+        app_frame = ctk.CTkFrame(root, fg_color='gray17')
         app_frame.pack(fill='x', padx=24, pady=(4, 10))
 
         def _make_kill_row(frame, name: str, pid: int) -> None:
             row = ctk.CTkFrame(frame, fg_color='transparent')
-            row.pack(fill='x', pady=1)
-            ctk.CTkLabel(row, text=f"  {name}  (PID {pid})", anchor='w').pack(side='left')
+            row.pack(fill='x', padx=8, pady=2)
+            ctk.CTkLabel(row, text=f"{name}  (PID {pid})", anchor='w').pack(side='left')
             def _kill(r=row, p=pid):
                 _kill_pid(p)
                 r.destroy()
-            ctk.CTkButton(row, text=t('kill_process'), width=56, height=24,
+            ctk.CTkButton(row, text=t('kill_process'), width=70, height=26,
                           fg_color='#ff3b30', command=_kill).pack(side='right')
 
         for name, pid in camera_apps:
@@ -896,8 +898,8 @@ def _uninstall_window_fn() -> None:
 
     # ── 로그 박스 ────────────────────────────────────────────────────
     ctk.CTkLabel(root, text=t('log'), anchor='w').pack(fill='x', padx=24)
-    log_box = ctk.CTkTextbox(root, height=110, state='disabled')
-    log_box.pack(fill='x', padx=24, pady=(4, 10))
+    log_box = ctk.CTkTextbox(root, height=90, state='disabled')
+    log_box.pack(fill='x', padx=24, pady=(4, 6))
 
     def _log(msg: str) -> None:
         def _update():
