@@ -726,30 +726,81 @@ def _schedule_delete(path: str) -> bool:
         return False
 
 
-def _regsvr32_unregister(path: str) -> bool:
-    """관리자 권한으로 regsvr32 /u /s 실행 (UAC 상승 포함)"""
-    import subprocess
-    # 1차: 현재 권한으로 시도
-    ret = subprocess.run(
-        ['regsvr32', '/u', '/s', path],
-        capture_output=True, creationflags=0x08000000,
-    )
-    if ret.returncode == 0:
-        return True
-    # 2차: PowerShell RunAs (UAC 프롬프트) — ExitCode 확인
+def _del_reg_tree(hive, path: str) -> None:
+    """레지스트리 키와 모든 하위 키를 재귀적으로 삭제 (없으면 무시)"""
+    import winreg
     try:
-        ps_cmd = (
-            f'$p = Start-Process regsvr32.exe '
-            f'-ArgumentList "/u /s `\'{path}`\'" '
-            f'-Verb RunAs -Wait -PassThru; exit $p.ExitCode'
-        )
-        ret2 = subprocess.run(
-            ['powershell', '-Command', ps_cmd],
-            creationflags=0x08000000,
-        )
-        return ret2.returncode == 0
+        key = winreg.OpenKey(hive, path,
+                             access=winreg.KEY_READ | winreg.KEY_WRITE | winreg.KEY_ENUMERATE_SUB_KEYS)
+    except FileNotFoundError:
+        return
+    while True:
+        try:
+            sub = winreg.EnumKey(key, 0)
+            _del_reg_tree(hive, path + '\\' + sub)
+        except OSError:
+            break
+    winreg.CloseKey(key)
+    try:
+        winreg.DeleteKey(hive, path)
     except Exception:
-        return False
+        pass
+
+
+def _unregister_unity_clsid() -> bool:
+    """
+    regsvr32를 사용하지 않고 레지스트리에서 직접 CLSID를 삭제.
+    DLL의 DllUnregisterServer를 호출하지 않으므로 팝업이 발생하지 않음.
+    """
+    import winreg, subprocess, tempfile, os
+    clsid = _UNITY_CLSID
+
+    # 1. HKCU — 관리자 권한 불필요
+    for hkcu_path in [
+        rf'Software\Classes\CLSID\{clsid}',
+        rf'Software\Classes\WOW6432Node\CLSID\{clsid}',
+    ]:
+        _del_reg_tree(winreg.HKEY_CURRENT_USER, hkcu_path)
+
+    # 2. HKLM — 임시 ps1 파일을 통해 UAC 상승 후 삭제 (CLSID 중괄호 퀴팅 문제 회피)
+    ps_script = f"""\
+$clsid = '{clsid}'
+$keys = @(
+    "HKLM:\\SOFTWARE\\Classes\\CLSID\\$clsid",
+    "HKLM:\\SOFTWARE\\Classes\\WOW6432Node\\CLSID\\$clsid",
+    "HKCR:\\CLSID\\$clsid"
+)
+foreach ($k in $keys) {{
+    if (Test-Path $k) {{
+        Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue
+    }}
+}}
+"""
+    ps1_path = ''
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ps1',
+                                        delete=False, encoding='utf-8') as f:
+            f.write(ps_script)
+            ps1_path = f.name
+
+        subprocess.run(
+            ['powershell', '-Command',
+             f'Start-Process powershell '
+             f'-ArgumentList "-ExecutionPolicy Bypass -File `"{ps1_path}`"" '
+             f'-Verb RunAs -Wait'],
+            creationflags=0x08000000,
+            timeout=30,
+        )
+    except Exception:
+        pass
+    finally:
+        if ps1_path:
+            try:
+                os.unlink(ps1_path)
+            except Exception:
+                pass
+
+    return True
 
 
 def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
@@ -794,11 +845,8 @@ def _do_uninstall(remove_unity: bool, remove_vbcable: bool,
                 import time
                 time.sleep(1.5)   # COM 객체 해제 대기
 
-            ok = _regsvr32_unregister(unity_path)
-            if ok:
-                log_cb("  ✓ 등록 해제 완료")
-            else:
-                log_cb("  ✗ 등록 해제 실패 (관리자 권한 필요)")
+            _unregister_unity_clsid()
+            log_cb("  ✓ CLSID 레지스트리 삭제 완료")
 
             # .ax 파일 삭제 시도
             log_cb(f"  파일 삭제 시도: {unity_path}")
