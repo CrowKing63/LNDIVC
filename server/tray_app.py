@@ -589,7 +589,7 @@ def _drivers_window_fn() -> None:
     btn_all.pack(side='left', expand=True, fill='x', padx=(0, 6))
 
     ctk.CTkButton(btn_row, text=t('close'), command=root.destroy,
-                  fg_color='gray30').pack(side='right', width=90)
+                  fg_color='gray30', width=90).pack(side='right')
 
     root.mainloop()
 
